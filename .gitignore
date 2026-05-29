@@ -1,0 +1,6 @@
+.env
+node_modules/
+.dart_tool/
+build/
+*.g.dart
+_fb_key.json

@@ -1,0 +1,30 @@
+{
+  "project_info": {
+    "project_number": "1059546643793",
+    "firebase_url": "https://zabil-7e670-default-rtdb.europe-west1.firebasedatabase.app",
+    "project_id": "zabil-7e670",
+    "storage_bucket": "zabil-7e670.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1059546643793:android:fb00814ee2d3c020152770",
+        "android_client_info": {
+          "package_name": "com.example.collab_notes"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyALP9FgoKZtlGErgKiAcNNPOaxWkOlKr6I"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

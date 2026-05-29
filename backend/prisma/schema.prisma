@@ -1,0 +1,246 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(uuid())
+  username     String   @unique
+  passwordHash String   @map("password_hash")
+  displayName  String?  @map("display_name")
+  avatarUrl    String?  @map("avatar_url")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  groupsCreated   Group[]         @relation("GroupCreator")
+  groupMembers    GroupMember[]
+  sentInvitations     Invitation[] @relation("InvitationSender")
+  receivedInvitations Invitation[] @relation("InvitationReceiver")
+  notesCreated    Note[]
+  refreshTokens   RefreshToken[]
+  groupChatMessages  GroupChatMessage[]
+  sentPersonalMessages     PersonalMessage[] @relation("PersonalSender")
+  receivedPersonalMessages PersonalMessage[] @relation("PersonalReceiver")
+  deviceTokens   DeviceToken[]
+
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String   @map("user_id")
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+model Group {
+  id        String   @id @default(uuid())
+  title     String
+  avatarUrl String?  @map("avatar_url")
+  isPersonal Boolean @default(false) @map("is_personal")
+  createdBy String   @map("created_by")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  creator     User              @relation("GroupCreator", fields: [createdBy], references: [id])
+  members     GroupMember[]
+  invitations Invitation[]
+  notes       Note[]
+  chatMessages GroupChatMessage[]
+
+  @@map("groups")
+}
+
+model GroupMember {
+  id       String   @id @default(uuid())
+  groupId  String   @map("group_id")
+  userId   String   @map("user_id")
+  role     String   @default("member") // owner | admin | member
+  joinedAt DateTime @default(now()) @map("joined_at")
+
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, userId])
+  @@index([userId])
+  @@map("group_members")
+}
+
+model Invitation {
+  id         String   @id @default(uuid())
+  groupId    String   @map("group_id")
+  senderId   String   @map("sender_id")
+  receiverId String   @map("receiver_id")
+  status     String   @default("pending") // pending | accepted | declined
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  group    Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  sender   User  @relation("InvitationSender", fields: [senderId], references: [id], onDelete: Cascade)
+  receiver User  @relation("InvitationReceiver", fields: [receiverId], references: [id], onDelete: Cascade)
+
+  @@index([receiverId, status])
+  @@map("invitations")
+}
+
+model Note {
+  id        String    @id @default(uuid())
+  groupId   String    @map("group_id")
+  createdBy String    @map("created_by")
+  title     String
+  content   String    @default("")
+  colorLabel String?  @map("color_label")
+  archived  Boolean   @default(false)
+  pinned    Boolean   @default(false)
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  group         Group               @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  creator       User                @relation(fields: [createdBy], references: [id])
+  checklistItems NoteChecklistItem[]
+  images        NoteImage[]
+  chatMessages  GroupChatMessage[]
+
+  @@index([groupId])
+  @@index([archived])
+  @@index([pinned])
+  @@index([deletedAt])
+  @@map("notes")
+}
+
+// ─── Чаты ────────────────────────────────────────────────────────────────────
+// Один общий стрим сообщений на группу. Если `noteId` указан — сообщение
+// также показывается в чате конкретной заметки (note-chat = filtered view).
+model GroupChatMessage {
+  id        String   @id @default(uuid())
+  groupId   String   @map("group_id")
+  senderId  String   @map("sender_id")
+  noteId    String?  @map("note_id") // optional — note-chat marker
+  body      String
+  imageUrl  String?  @map("image_url")
+  imageMimeType String? @map("image_mime_type")
+  imageSize Int? @map("image_size")
+  imageCompressed Boolean? @map("image_compressed")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  group  Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  sender User  @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  note   Note? @relation(fields: [noteId], references: [id], onDelete: Cascade)
+
+  @@index([groupId, createdAt])
+  @@index([noteId, createdAt])
+  @@map("group_chat_messages")
+}
+
+// Личные 1:1 чаты между пользователями.
+model PersonalMessage {
+  id         String   @id @default(uuid())
+  senderId   String   @map("sender_id")
+  receiverId String   @map("receiver_id")
+  body       String
+  imageUrl   String?  @map("image_url")
+  imageMimeType String? @map("image_mime_type")
+  imageSize  Int?     @map("image_size")
+  imageCompressed Boolean? @map("image_compressed")
+  readAt     DateTime? @map("read_at")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  sender   User @relation("PersonalSender", fields: [senderId], references: [id], onDelete: Cascade)
+  receiver User @relation("PersonalReceiver", fields: [receiverId], references: [id], onDelete: Cascade)
+
+  @@index([senderId, receiverId, createdAt])
+  @@index([receiverId, senderId, createdAt])
+  @@map("personal_messages")
+}
+
+// ─── Push-уведомления ───────────────────────────────────────────────────────
+// FCM / APNs / WNS device tokens. Один user может иметь много устройств.
+model DeviceToken {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  platform  String   // android | windows | ios
+  token     String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, token])
+  @@index([userId])
+  @@map("device_tokens")
+}
+
+// ─── Релизы (для автообновления) ────────────────────────────────────────────
+// Файлы дистрибутивов лежат на диске в /releases/, отдаются статикой.
+// Запись создаётся ops-скриптом при заливке новой сборки.
+model AppRelease {
+  id                  String   @id @default(uuid())
+  version             String   // 1.5.0
+  platform            String   // android | windows
+  downloadUrl         String   @map("download_url") // относительный путь /releases/...
+  sha256              String?
+  fileSize            Int?     @map("file_size")
+  mandatory           Boolean  @default(false)
+  minSupportedVersion String?  @map("min_supported_version") // если < — force update
+  notes               String?  // changelog для UI
+  releasedAt          DateTime @default(now()) @map("released_at")
+
+  @@unique([platform, version])
+  @@index([platform, releasedAt])
+  @@map("app_releases")
+}
+
+model AvatarHistory {
+  id         String   @id @default(uuid())
+  entityType String   @map("entity_type") // user | group
+  entityId   String   @map("entity_id")
+  avatarUrl  String   @map("avatar_url")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([entityType, entityId, createdAt])
+  @@map("avatar_history")
+}
+
+model NoteChecklistItem {
+  id        String   @id @default(uuid())
+  noteId    String   @map("note_id")
+  text      String
+  completed Boolean  @default(false)
+  position  Int
+  createdAt DateTime @default(now()) @map("created_at")
+
+  note Note @relation(fields: [noteId], references: [id], onDelete: Cascade)
+
+  @@index([noteId, position])
+  @@map("note_checklist_items")
+}
+
+model NoteImage {
+  id           String   @id @default(uuid())
+  noteId       String   @map("note_id")
+  filename     String
+  originalName String   @map("original_name")
+  mimeType     String   @map("mime_type")
+  fileSize     Int      @map("file_size")
+  path         String
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  note Note @relation(fields: [noteId], references: [id], onDelete: Cascade)
+
+  @@index([noteId])
+  @@map("note_images")
+}

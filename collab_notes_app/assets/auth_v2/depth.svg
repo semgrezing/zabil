@@ -1,0 +1,17 @@
+<svg preserveAspectRatio="none" width="100%" height="100%" overflow="visible" style="display: block;" viewBox="0 0 926 926" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g id="Depth" filter="url(#filter0_f_0_9)">
+<path fill-rule="evenodd" clip-rule="evenodd" d="M806 291.5L634.5 120L463 291.5L291.5 120L120 291.5L291.5 463L120 634.5L291.5 806L463 634.5L634.5 806L806 634.5L634.5 463L806 291.5ZM634.5 463L463 634.5L291.5 463L463 291.5L634.5 463Z" fill="url(#paint0_radial_0_9)"/>
+</g>
+<defs>
+<filter id="filter0_f_0_9" x="0" y="0" width="926" height="926" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+<feFlood flood-opacity="0" result="BackgroundImageFix"/>
+<feBlend mode="normal" in="SourceGraphic" in2="BackgroundImageFix" result="shape"/>
+<feGaussianBlur stdDeviation="60" result="effect1_foregroundBlur_0_9"/>
+</filter>
+<radialGradient id="paint0_radial_0_9" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(165.716 299.54) rotate(59.5877) scale(587.265)">
+<stop stop-color="#015C4B"/>
+<stop offset="0.528846" stop-color="#D0EFF3"/>
+<stop offset="1" stop-color="#2A00C0"/>
+</radialGradient>
+</defs>
+</svg>

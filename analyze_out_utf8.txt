@@ -1,0 +1,36 @@
+﻿Analyzing collab_notes_app...                                   
+
+warning - The value of the field '_tokenStorage' isn't used. Try removing the field, or using it - lib\core\api\api_client.dart:9:16 - unused_field
+   info - Use an initializing formal to assign a parameter to a field. Try using an initialing formal ('this.user') to initialize the field - lib\features\auth\models\auth_models.dart:32:9 - prefer_initializing_formals
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss. Try replacing the use of the deprecated member with the replacement - lib\features\invitations\screens\invitations_screen.dart:63:38 - deprecated_member_use
+   info - Unnecessary braces in a string interpolation. Try removing the braces - lib\features\notes\models\note_model.dart:48:13 - unnecessary_brace_in_string_interps
+warning - Unused import: '../../../features/groups/providers/groups_provider.dart'. Try removing the import directive - lib\features\notes\screens\note_editor_screen.dart:7:8 - unused_import
+   info - 'onPopInvoked' is deprecated and shouldn't be used. Use onPopInvokedWithResult instead. This feature was deprecated after v3.22.0-12.0.pre. Try replacing the use of the deprecated member with the replacement - lib\features\notes\screens\note_editor_screen.dart:62:7 - deprecated_member_use
+   info - 'surfaceVariant' is deprecated and shouldn't be used. Use surfaceContainerHighest instead. This feature was deprecated after v3.18.0-0.1.pre. Try replacing the use of the deprecated member with the replacement - lib\features\notes\screens\note_editor_screen.dart:177:62 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss. Try replacing the use of the deprecated member with the replacement - lib\features\notes\screens\note_editor_screen.dart:376:68 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss. Try replacing the use of the deprecated member with the replacement - lib\features\notes\screens\notes_list_screen.dart:139:32 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss. Try replacing the use of the deprecated member with the replacement - lib\features\notes\screens\notes_list_screen.dart:150:34 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss. Try replacing the use of the deprecated member with the replacement - lib\features\notes\widgets\note_card.dart:87:30 - deprecated_member_use
+warning - The declaration '_searchDio' isn't referenced. Try removing the declaration of '_searchDio' - lib\features\search\screens\search_screen.dart:17:7 - unused_element
+   info - Use a function declaration rather than a variable assignment to bind a function to a name. Try rewriting the closure assignment as a function declaration - lib\features\settings\screens\settings_screen.dart:191:11 - prefer_function_declarations_over_variables
+   info - 'groupValue' is deprecated and shouldn't be used. Use a RadioGroup ancestor to manage group value instead. This feature was deprecated after v3.32.0-0.0.pre. Try replacing the use of the deprecated member with the replacement - lib\features\settings\screens\settings_screen.dart:242:7 - deprecated_member_use
+   info - 'onChanged' is deprecated and shouldn't be used. Use RadioGroup to handle value change instead. This feature was deprecated after v3.32.0-0.0.pre. Try replacing the use of the deprecated member with the replacement - lib\features\settings\screens\settings_screen.dart:243:7 - deprecated_member_use
+   info - 'background' is deprecated and shouldn't be used. Use surface instead. This feature was deprecated after v3.18.0-0.1.pre. Try replacing the use of the deprecated member with the replacement - lib\shared\theme\app_theme.dart:14:11 - deprecated_member_use
+   info - 'surfaceVariant' is deprecated and shouldn't be used. Use surfaceContainerHighest instead. This feature was deprecated after v3.18.0-0.1.pre. Try replacing the use of the deprecated member with the replacement - lib\shared\theme\app_theme.dart:16:11 - deprecated_member_use
+   info - 'onBackground' is deprecated and shouldn't be used. Use onSurface instead. This feature was deprecated after v3.18.0-0.1.pre. Try replacing the use of the deprecated member with the replacement - lib\shared\theme\app_theme.dart:17:11 - deprecated_member_use
+   info - 'background' is deprecated and shouldn't be used. Use surface instead. This feature was deprecated after v3.18.0-0.1.pre. Try replacing the use of the deprecated member with the replacement - lib\shared\theme\app_theme.dart:94:11 - deprecated_member_use
+   info - 'surfaceVariant' is deprecated and shouldn't be used. Use surfaceContainerHighest instead. This feature was deprecated after v3.18.0-0.1.pre. Try replacing the use of the deprecated member with the replacement - lib\shared\theme\app_theme.dart:96:11 - deprecated_member_use
+   info - 'onBackground' is deprecated and shouldn't be used. Use onSurface instead. This feature was deprecated after v3.18.0-0.1.pre. Try replacing the use of the deprecated member with the replacement - lib\shared\theme\app_theme.dart:97:11 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss. Try replacing the use of the deprecated member with the replacement - lib\shared\widgets\app_loader.dart:37:62 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss. Try replacing the use of the deprecated member with the replacement - lib\shared\widgets\app_loader.dart:44:68 - deprecated_member_use
+warning - Unused import: '../theme/app_colors.dart'. Try removing the import directive - lib\shared\widgets\main_shell.dart:4:8 - unused_import
+  error - The name 'MyApp' isn't a class. Try correcting the name to match an existing class - test\widget_test.dart:16:35 - creation_with_non_type
+
+flutter : 25 issues found. (ran in 9.2s)
+строка:1 знак:1
++ flutter analyze > "m:\zabil\analyze_out.txt" 2>&1; Write-Host "Exit:  ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (25 issues found. (ran in 9.2s):St 
+   ring) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
