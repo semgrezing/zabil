@@ -5,7 +5,7 @@
     <!-- Stage 7 notifications: на Android 13+ требуется явное разрешение -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <application
-        android:label="collab_notes"
+        android:label="Collab Notes Alpha"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity
