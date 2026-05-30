@@ -56,7 +56,7 @@ final routerProvider = Provider<GoRouter>((ref) {
             routes: [
               GoRoute(
                 path: 'new',
-                builder: (_, state) => const NoteEditorScreen(),
+                builder: (_, __) => const NoteEditorScreen(),
               ),
               GoRoute(
                 path: ':id',

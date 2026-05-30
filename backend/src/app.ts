@@ -22,7 +22,10 @@ import { updateRoutes } from './modules/update/routes.js'
 import { chatsRoutes } from './modules/chats/routes.js'
 import { notificationsRoutes } from './modules/notifications/routes.js'
 import { activityRoutes } from './modules/activity/routes.js'
-import { addConnection, removeConnection } from './modules/chats/wsHub.js'
+import {
+  addConnection, removeConnection,
+  joinNote, leaveNote, leaveAllNotes, broadcastToNote,
+} from './modules/chats/wsHub.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -139,8 +142,86 @@ export async function buildApp() {
         addConnection(userId, handle)
         ws.send(JSON.stringify({ type: 'hello', userId }))
 
-        ws.on('close', () => removeConnection(userId, handle))
-        ws.on('error', () => removeConnection(userId, handle))
+        // Cache displayName for this connection (resolved lazily once)
+        let cachedDisplayName: string | null = null
+        async function getDisplayName(): Promise<string> {
+          if (cachedDisplayName !== null) return cachedDisplayName
+          const user = await app.prisma.user.findUnique({
+            where: { id: userId },
+            select: { displayName: true, username: true },
+          })
+          cachedDisplayName = user?.displayName ?? user?.username ?? userId
+          return cachedDisplayName
+        }
+
+        // ── Incoming message handler ───────────────────────────
+        ws.on('message', async (raw: Buffer | string) => {
+          try {
+            const msg = JSON.parse(typeof raw === 'string' ? raw : raw.toString())
+
+            if (msg.type === 'presence' && msg.noteId) {
+              const noteId = msg.noteId as string
+
+              if (msg.action === 'join') {
+                const viewers = joinNote(userId, noteId)
+                const displayName = await getDisplayName()
+                broadcastToNote(noteId, userId, {
+                  type: 'presence',
+                  noteId,
+                  userId,
+                  displayName,
+                  action: 'join',
+                })
+                // Send the current viewer list back to the joining user
+                ws.send(JSON.stringify({ type: 'presence', noteId, action: 'viewers', viewers }))
+              } else if (msg.action === 'leave') {
+                leaveNote(userId, noteId)
+                const displayName = await getDisplayName()
+                broadcastToNote(noteId, userId, {
+                  type: 'presence',
+                  noteId,
+                  userId,
+                  displayName,
+                  action: 'leave',
+                })
+              }
+            } else if (msg.type === 'typing' && msg.noteId) {
+              broadcastToNote(msg.noteId as string, userId, {
+                type: 'typing',
+                noteId: msg.noteId,
+                userId,
+              })
+            }
+          } catch (_) {
+            // Ignore malformed messages
+          }
+        })
+
+        ws.on('close', () => {
+          removeConnection(userId, handle)
+          // Broadcast leave for every note this user was viewing
+          const leftNotes = leaveAllNotes(userId)
+          for (const noteId of leftNotes) {
+            broadcastToNote(noteId, userId, {
+              type: 'presence',
+              noteId,
+              userId,
+              action: 'leave',
+            })
+          }
+        })
+        ws.on('error', () => {
+          removeConnection(userId, handle)
+          const leftNotes = leaveAllNotes(userId)
+          for (const noteId of leftNotes) {
+            broadcastToNote(noteId, userId, {
+              type: 'presence',
+              noteId,
+              userId,
+              action: 'leave',
+            })
+          }
+        })
       } catch (_) {
         ws.close(1008, 'invalid token')
       }

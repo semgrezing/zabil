@@ -41,6 +41,25 @@ class WsHelloEvent extends WsEvent {
   const WsHelloEvent(this.userId);
 }
 
+class NotePresenceEvent extends WsEvent {
+  final String noteId;
+  final String userId;
+  final String displayName;
+  final String action; // 'join' | 'leave'
+  const NotePresenceEvent({
+    required this.noteId,
+    required this.userId,
+    required this.displayName,
+    required this.action,
+  });
+}
+
+class NoteTypingEvent extends WsEvent {
+  final String noteId;
+  final String userId;
+  const NoteTypingEvent({required this.noteId, required this.userId});
+}
+
 /// WebSocket-клиент с auto-reconnect.
 ///
 /// Подключается на auth (есть валидный access token), переподключается при
@@ -115,6 +134,18 @@ class WsClient {
           body: data['body'] as String? ?? '',
           data: data,
         ));
+      } else if (type == 'presence') {
+        _eventsController.add(NotePresenceEvent(
+          noteId: json['noteId'] as String,
+          userId: json['userId'] as String,
+          displayName: json['displayName'] as String? ?? '',
+          action: json['action'] as String,
+        ));
+      } else if (type == 'typing') {
+        _eventsController.add(NoteTypingEvent(
+          noteId: json['noteId'] as String,
+          userId: json['userId'] as String,
+        ));
       }
     } catch (e) {
       debugPrint('[ws] parse error: $e');
@@ -140,6 +171,25 @@ class WsClient {
       _retryDelaySec = (_retryDelaySec * 2).clamp(3, 30);
       connect();
     });
+  }
+
+  /// Сообщает серверу, что пользователь открыл/закрыл заметку.
+  void sendPresence(String noteId, String action) {
+    _send({'type': 'presence', 'noteId': noteId, 'action': action});
+  }
+
+  /// Сообщает серверу, что пользователь печатает в заметке.
+  void sendTyping(String noteId) {
+    _send({'type': 'typing', 'noteId': noteId});
+  }
+
+  void _send(Map<String, dynamic> data) {
+    if (!_connected || _channel == null) return;
+    try {
+      _channel!.sink.add(jsonEncode(data));
+    } catch (e) {
+      debugPrint('[ws] send error: $e');
+    }
   }
 
   Future<void> disconnect() async {

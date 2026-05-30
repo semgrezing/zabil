@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:solar_icons/solar_icons.dart';
@@ -7,6 +8,7 @@ import '../providers/notes_provider.dart';
 import '../models/note_model.dart';
 import '../widgets/note_card.dart';
 import '../../../shared/widgets/app_loader.dart';
+import '../../../shared/theme/app_colors.dart';
 import '../../../features/groups/providers/groups_provider.dart';
 import '../../../shared/widgets/app_chip.dart';
 
@@ -287,6 +289,10 @@ class _NotesListScreenState extends ConsumerState<NotesListScreen> {
 
                 if (_gridView) {
                   return RefreshIndicator(
+                    color: AppColors.white,
+                    backgroundColor: AppColors.bg3,
+                    displacement: 60,
+                    strokeWidth: 2.5,
                     onRefresh: () => ref.read(notesProvider.notifier).refresh(),
                     child: LayoutBuilder(
                       builder: (context, constraints) {
@@ -295,16 +301,57 @@ class _NotesListScreenState extends ConsumerState<NotesListScreen> {
                             : constraints.maxWidth >= 800
                                 ? 3
                                 : 2;
-                        return GridView.builder(
-                          padding: const EdgeInsets.all(16),
-                          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                            crossAxisCount: crossAxisCount,
-                            crossAxisSpacing: 10,
-                            mainAxisSpacing: 10,
-                            childAspectRatio: 1.1,
-                          ),
+                        return MasonryGridView.count(
+                          padding: const EdgeInsets.fromLTRB(12, 12, 12, 80),
+                          crossAxisCount: crossAxisCount,
+                          mainAxisSpacing: 10,
+                          crossAxisSpacing: 10,
                           itemCount: notes.length,
-                          itemBuilder: (context, index) => contentBuilder(index),
+                          itemBuilder: (context, index) {
+                            final note = notes[index];
+                            return NoteCard(
+                              note: note,
+                              compactMode: true,
+                              onTap: () => context.go('/notes/${note.id}'),
+                              onArchive: () async {
+                                try {
+                                  final archived = await ref
+                                      .read(notesProvider.notifier)
+                                      .archiveNote(note.id);
+                                  if (!context.mounted) return;
+                                  final messenger = ScaffoldMessenger.of(context);
+                                  messenger.clearSnackBars();
+                                  messenger.showSnackBar(
+                                    SnackBar(
+                                      content: Text(
+                                        archived
+                                            ? 'Заметка отправлена в архив'
+                                            : 'Заметка восстановлена из архива',
+                                      ),
+                                    ),
+                                  );
+                                } catch (e) {
+                                  if (!context.mounted) return;
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(content: Text('Не удалось архивировать: $e')),
+                                  );
+                                }
+                              },
+                              onDelete: () => _confirmDelete(context, ref, note),
+                              onMove: () => _moveNote(context, ref, note),
+                              onTogglePin: () async {
+                                try {
+                                  await ref.read(notesProvider.notifier).togglePin(note.id);
+                                } catch (e) {
+                                  if (!context.mounted) return;
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(content: Text('Не удалось закрепить: $e')),
+                                  );
+                                }
+                              },
+                              onColorChanged: (color) => _setNoteColor(context, ref, note, color),
+                            );
+                          },
                         );
                       },
                     ),
@@ -314,9 +361,9 @@ class _NotesListScreenState extends ConsumerState<NotesListScreen> {
                 return RefreshIndicator(
                   onRefresh: () => ref.read(notesProvider.notifier).refresh(),
                   child: ListView.separated(
-                    padding: const EdgeInsets.all(16),
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 80),
                     itemCount: notes.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 8),
+                    separatorBuilder: (_, __) => const SizedBox(height: 10),
                     itemBuilder: (context, index) => contentBuilder(index),
                   ),
                 );
@@ -325,7 +372,10 @@ class _NotesListScreenState extends ConsumerState<NotesListScreen> {
           ),
         ],
       ),
-      floatingActionButton: _CreateNoteFab(),
+      floatingActionButton: Padding(
+        padding: const EdgeInsets.only(bottom: 72),
+        child: _CreateNoteFab(),
+      ),
     );
   }
 
@@ -463,12 +513,26 @@ class _CreateNoteFab extends ConsumerWidget {
           return;
         }
 
+        // Если провайдеры ещё загружаются — подождём
+        if (groupsAsync.isLoading || personalAsync.isLoading) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Загрузка контекстов...'),
+              duration: Duration(seconds: 1),
+            ),
+          );
+          return;
+        }
+
         final groups = groupsAsync.valueOrNull ?? [];
         final personal = personalAsync.valueOrNull;
 
         if (groups.isEmpty && personal == null) {
+          // Принудительно обновим провайдеры
+          ref.invalidate(groupsProvider);
+          ref.invalidate(personalContextProvider);
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Контексты заметок пока недоступны')),
+            const SnackBar(content: Text('Контексты недоступны. Обновляю...')),
           );
           return;
         }
