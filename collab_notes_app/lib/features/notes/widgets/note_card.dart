@@ -1,5 +1,4 @@
 import 'dart:math' as math;
-import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:solar_icons/solar_icons.dart';
@@ -167,45 +166,24 @@ class _NoteCardState extends State<NoteCard> {
         note.checklistItems.where((i) => i.completed).length;
     final totalItems = note.checklistItems.length;
 
-    return ClipRRect(
-      borderRadius: cardRadius,
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-        child: Container(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: labelColor != null
-                  ? [
-                      labelColor.withValues(alpha: 0.10),
-                      labelColor.withValues(alpha: 0.04),
-                    ]
-                  : [
-                      Colors.white.withValues(alpha: 0.07),
-                      Colors.white.withValues(alpha: 0.03),
-                    ],
-            ),
-            borderRadius: cardRadius,
-            border: Border.all(
-              color: labelColor?.withValues(alpha: 0.25) ??
-                  Colors.white.withValues(alpha: 0.08),
-              width: 1,
-            ),
-          ),
-          child: Material(
-            color: Colors.transparent,
-            child: InkWell(
-              onTap: onTap,
-              borderRadius: cardRadius,
-              splashColor: Colors.white.withValues(alpha: 0.05),
-              highlightColor: Colors.white.withValues(alpha: 0.03),
-              child: Padding(
-                padding: const EdgeInsets.all(AppSpacing.lg),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFF1A1A1A),
+        borderRadius: cardRadius,
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: cardRadius,
+          splashColor: Colors.white.withValues(alpha: 0.05),
+          highlightColor: Colors.white.withValues(alpha: 0.03),
+          child: Padding(
+            padding: const EdgeInsets.all(AppSpacing.lg),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
                     // Header: color dot + group tag + menu
                     Row(
                       children: [
@@ -256,37 +234,35 @@ class _NoteCardState extends State<NoteCard> {
 
                     const SizedBox(height: AppSpacing.md),
 
-                    // Title + optional image
-                    if (note.images.isNotEmpty)
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Expanded(child: _buildTitleAndContent(theme)),
-                          const SizedBox(width: AppSpacing.md),
-                          _NoteImagePreview(images: note.images),
-                        ],
-                      )
-                    else
-                      _buildTitleAndContent(theme),
-
-                    // Checklist progress
-                    if (totalItems > 0) ...[
-                      const SizedBox(height: AppSpacing.md),
-                      _ChecklistProgress(
-                        completed: completedItems,
-                        total: totalItems,
-                      ),
+                // Title + optional image
+                if (note.images.isNotEmpty)
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(child: _buildTitleAndContent(theme)),
+                      const SizedBox(width: AppSpacing.md),
+                      _NoteImagePreview(images: note.images),
                     ],
+                  )
+                else
+                  _buildTitleAndContent(theme),
 
-                    // Footer
-                    const SizedBox(height: AppSpacing.md),
-                    _UpdatedByRow(
-                      creator: note.creator,
-                      updatedAt: note.updatedAt,
-                    ),
-                  ],
+                // Checklist progress
+                if (totalItems > 0) ...[
+                  const SizedBox(height: AppSpacing.md),
+                  _ChecklistProgress(
+                    completed: completedItems,
+                    total: totalItems,
+                  ),
+                ],
+
+                // Footer
+                const SizedBox(height: AppSpacing.md),
+                _UpdatedByRow(
+                  creator: note.creator,
+                  updatedAt: note.updatedAt,
                 ),
-              ),
+              ],
             ),
           ),
         ),

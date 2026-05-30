@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/note_model.dart';
 import '../services/notes_service.dart';
@@ -42,18 +44,136 @@ final notesProvider = AsyncNotifierProvider<NotesNotifier, List<NoteModel>>(
 class NotesNotifier extends AsyncNotifier<List<NoteModel>> {
   NotesService get _service => ref.read(notesServiceProvider);
 
-  @override
-  Future<List<NoteModel>> build() async {
-    final filter = ref.watch(notesFilterProvider);
-    return _service.getNotes(
+  final Map<String, List<NoteModel>> _queryCache = {};
+  final Map<String, List<NoteModel>> _contextCache = {};
+  Timer? _searchDebounce;
+  bool _disposeHookRegistered = false;
+
+  String _normalizeSearch(String? search) => search?.trim().toLowerCase() ?? '';
+
+  String _contextKey({
+    String? groupId,
+    required bool personal,
+    required bool showArchived,
+  }) {
+    return 'group:${groupId ?? ''}|personal:$personal|archived:$showArchived';
+  }
+
+  String _queryKey({
+    String? groupId,
+    required bool personal,
+    required bool showArchived,
+    String? search,
+  }) {
+    return '${_contextKey(groupId: groupId, personal: personal, showArchived: showArchived)}|search:${_normalizeSearch(search)}';
+  }
+
+  String _queryKeyFromFilter(NotesFilter filter) {
+    return _queryKey(
       groupId: filter.groupId,
       personal: filter.personal,
+      showArchived: filter.showArchived,
       search: filter.search,
-      archived: filter.showArchived ? true : false,
     );
   }
 
+  List<NoteModel> _applyLocalSearch(List<NoteModel> notes, String search) {
+    if (search.isEmpty) return notes;
+    return notes.where((n) {
+      final title = n.title.toLowerCase();
+      final content = n.content.toLowerCase();
+      final group = (n.groupTitle ?? '').toLowerCase();
+      return title.contains(search) || content.contains(search) || group.contains(search);
+    }).toList(growable: false);
+  }
+
+  void _scheduleServerSearchSync(NotesFilter filter) {
+    _searchDebounce?.cancel();
+    final queryKey = _queryKeyFromFilter(filter);
+
+    _searchDebounce = Timer(const Duration(milliseconds: 300), () async {
+      try {
+        final serverNotes = await _service.getNotes(
+          groupId: filter.groupId,
+          personal: filter.personal,
+          search: filter.search,
+          archived: filter.showArchived ? true : false,
+        );
+        _queryCache[queryKey] = serverNotes;
+
+        if (_queryKeyFromFilter(ref.read(notesFilterProvider)) == queryKey) {
+          state = AsyncData(serverNotes);
+        }
+      } catch (_) {
+        // Keep local results if server-side search fails transiently.
+      }
+    });
+  }
+
+  void _clearCaches() {
+    _queryCache.clear();
+    _contextCache.clear();
+  }
+
+  @override
+  Future<List<NoteModel>> build() async {
+    if (!_disposeHookRegistered) {
+      _disposeHookRegistered = true;
+      ref.onDispose(() {
+        _searchDebounce?.cancel();
+      });
+    }
+
+    final filter = ref.watch(notesFilterProvider);
+    final normalizedSearch = _normalizeSearch(filter.search);
+    final contextKey = _contextKey(
+      groupId: filter.groupId,
+      personal: filter.personal,
+      showArchived: filter.showArchived,
+    );
+    final queryKey = _queryKeyFromFilter(filter);
+
+    final cachedQuery = _queryCache[queryKey];
+    if (cachedQuery != null) return cachedQuery;
+
+    if (normalizedSearch.isEmpty) {
+      final cachedContext = _contextCache[contextKey];
+      if (cachedContext != null) {
+        _queryCache[queryKey] = cachedContext;
+        return cachedContext;
+      }
+
+      final base = await _service.getNotes(
+        groupId: filter.groupId,
+        personal: filter.personal,
+        archived: filter.showArchived ? true : false,
+      );
+      _contextCache[contextKey] = base;
+      _queryCache[queryKey] = base;
+      return base;
+    }
+
+    final cachedContext = _contextCache[contextKey];
+    if (cachedContext != null) {
+      final local = _applyLocalSearch(cachedContext, normalizedSearch);
+      _scheduleServerSearchSync(filter);
+      return local;
+    }
+
+    final base = await _service.getNotes(
+      groupId: filter.groupId,
+      personal: filter.personal,
+      archived: filter.showArchived ? true : false,
+    );
+    _contextCache[contextKey] = base;
+    final local = _applyLocalSearch(base, normalizedSearch);
+    _scheduleServerSearchSync(filter);
+    return local;
+  }
+
   Future<void> refresh() async {
+    _searchDebounce?.cancel();
+    _clearCaches();
     state = const AsyncLoading();
     state = await AsyncValue.guard(() => _service.getNotes(
           groupId: ref.read(notesFilterProvider).groupId,
@@ -61,6 +181,21 @@ class NotesNotifier extends AsyncNotifier<List<NoteModel>> {
           search: ref.read(notesFilterProvider).search,
           archived: ref.read(notesFilterProvider).showArchived ? true : false,
         ));
+
+    final filter = ref.read(notesFilterProvider);
+    final queryKey = _queryKeyFromFilter(filter);
+    final contextKey = _contextKey(
+      groupId: filter.groupId,
+      personal: filter.personal,
+      showArchived: filter.showArchived,
+    );
+    final current = state.valueOrNull;
+    if (current != null) {
+      _queryCache[queryKey] = current;
+      if (_normalizeSearch(filter.search).isEmpty) {
+        _contextCache[contextKey] = current;
+      }
+    }
   }
 
   Future<NoteModel> createNote({
@@ -77,6 +212,7 @@ class NotesNotifier extends AsyncNotifier<List<NoteModel>> {
       content: content,
       colorLabel: colorLabel,
     );
+    _clearCaches();
     state = state.whenData((notes) => [note, ...notes]);
     return note;
   }
@@ -95,6 +231,7 @@ class NotesNotifier extends AsyncNotifier<List<NoteModel>> {
       colorLabel: colorLabel,
       pinned: pinned,
     );
+    _clearCaches();
     state = state.whenData(
       (notes) => notes.map((n) => n.id == id ? updated : n).toList(),
     );
@@ -108,11 +245,13 @@ class NotesNotifier extends AsyncNotifier<List<NoteModel>> {
 
   Future<void> deleteNote(String id) async {
     await _service.deleteNote(id);
+    _clearCaches();
     state = state.whenData((notes) => notes.where((n) => n.id != id).toList());
   }
 
   Future<bool> archiveNote(String id) async {
     final result = await _service.archiveNote(id);
+    _clearCaches();
     state = state.whenData((notes) => notes.where((n) => n.id != id).toList());
     return result['archived'] == true;
   }
@@ -127,8 +266,10 @@ class NotesNotifier extends AsyncNotifier<List<NoteModel>> {
       targetGroupId: targetGroupId,
       targetPersonal: targetPersonal,
     );
+    _clearCaches();
     await refresh();
   }
+
 }
 
 // Single note provider

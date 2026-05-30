@@ -31,7 +31,6 @@ class _NotesListScreenState extends ConsumerState<NotesListScreen> {
   @override
   void initState() {
     super.initState();
-    _searchCtrl.addListener(() => setState(() {}));
     _loadLayoutPreference();
   }
 
