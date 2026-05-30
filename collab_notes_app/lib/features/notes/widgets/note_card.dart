@@ -429,6 +429,7 @@ class _NoteCardState extends State<NoteCard> {
     final picked = await showModalBottomSheet<String?>(
       context: context,
       showDragHandle: true,
+      useRootNavigator: true,
       backgroundColor: AppColors.bg2,
       builder: (ctx) => _ColorPickerSheet(initial: note.colorLabel),
     );

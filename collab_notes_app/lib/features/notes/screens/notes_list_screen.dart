@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 import 'package:go_router/go_router.dart';
@@ -22,6 +23,7 @@ class NotesListScreen extends ConsumerStatefulWidget {
 
 class _NotesListScreenState extends ConsumerState<NotesListScreen> {
   final _searchCtrl = TextEditingController();
+  final _searchFocus = FocusNode();
   static const _layoutPrefKey = 'notes.layout.grid';
 
   String? _routeGroupId;
@@ -33,11 +35,26 @@ class _NotesListScreenState extends ConsumerState<NotesListScreen> {
   void initState() {
     super.initState();
     _loadLayoutPreference();
+    _searchFocus.onKeyEvent = _handleSearchKeyEvent;
+  }
+
+  KeyEventResult _handleSearchKeyEvent(FocusNode node, KeyEvent event) {
+    if (event is KeyDownEvent &&
+        event.logicalKey == LogicalKeyboardKey.backspace &&
+        _searchCtrl.text.isEmpty) {
+      setState(() => _showSearch = false);
+      ref.read(notesFilterProvider.notifier).update(
+            (s) => s.copyWith(search: ''),
+          );
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
   }
 
   @override
   void dispose() {
     _searchCtrl.dispose();
+    _searchFocus.dispose();
     super.dispose();
   }
 
@@ -89,6 +106,7 @@ class _NotesListScreenState extends ConsumerState<NotesListScreen> {
         title: _showSearch
             ? TextField(
                 controller: _searchCtrl,
+                focusNode: _searchFocus,
                 autofocus: true,
                 style: const TextStyle(color: AppColors.white, fontSize: 16),
                 decoration: InputDecoration(
@@ -347,12 +365,7 @@ class _NotesListScreenState extends ConsumerState<NotesListScreen> {
           ),
         ],
       ),
-      floatingActionButton: filter.showArchived
-          ? null
-          : Padding(
-              padding: const EdgeInsets.only(bottom: 72),
-              child: _CreateNoteFab(),
-            ),
+      floatingActionButton: null,
     );
   }
 
@@ -486,6 +499,7 @@ class _NotesListScreenState extends ConsumerState<NotesListScreen> {
     return showModalBottomSheet<_NoteContextTarget>(
       context: context,
       showDragHandle: true,
+      useRootNavigator: true,
       builder: (ctx) => Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -524,132 +538,24 @@ class _ViewToggle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        GestureDetector(
-          onTap: isGrid ? null : onToggle,
-          child: Icon(
-            SolarIconsOutline.widget,
-            size: 20,
-            color: isGrid ? AppColors.white : AppColors.fgSoft,
-          ),
-        ),
-        const SizedBox(width: 12),
-        GestureDetector(
-          onTap: isGrid ? onToggle : null,
-          child: Icon(
-            SolarIconsOutline.listDown,
-            size: 20,
-            color: !isGrid ? AppColors.white : AppColors.fgSoft,
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-// ─── Create Note FAB ──────────────────────────────────────────────────────────
-
-class _CreateNoteFab extends ConsumerWidget {
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final filter = ref.watch(notesFilterProvider);
-    final groupsAsync = ref.watch(groupsProvider);
-    final personalAsync = ref.watch(personalContextProvider);
-
-    return FloatingActionButton(
-      onPressed: () async {
-        if (filter.personal) {
-          context.go('/notes/new?personal=true');
-          return;
-        }
-
-        if (filter.groupId != null && filter.groupId!.isNotEmpty) {
-          context.go('/notes/new?groupId=${filter.groupId!}');
-          return;
-        }
-
-        if (groupsAsync.isLoading || personalAsync.isLoading) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Загрузка контекстов...'),
-              duration: Duration(seconds: 1),
+    return GestureDetector(
+      onTap: onToggle,
+      child: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 350),
+        transitionBuilder: (child, animation) {
+          return RotationTransition(
+            turns: Tween(begin: 0.5, end: 1.0).animate(
+              CurvedAnimation(parent: animation, curve: Curves.easeInOut),
             ),
+            child: FadeTransition(opacity: animation, child: child),
           );
-          return;
-        }
-
-        final groups = groupsAsync.valueOrNull ?? [];
-        final personal = personalAsync.valueOrNull;
-
-        if (groups.isEmpty && personal == null) {
-          ref.invalidate(groupsProvider);
-          ref.invalidate(personalContextProvider);
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-                content: Text('Контексты недоступны. Обновляю...')),
-          );
-          return;
-        }
-
-        final contexts = <_NoteContextTarget>[
-          if (personal != null) _NoteContextTarget.personal(personal.id),
-          ...groups.map((g) => _NoteContextTarget.group(g.id, g.title)),
-        ];
-
-        if (contexts.length == 1) {
-          final one = contexts.first;
-          if (one.personal) {
-            context.go('/notes/new?personal=true');
-          } else {
-            context.go('/notes/new?groupId=${one.id}');
-          }
-        } else {
-          final selected = await _pickContext(context, contexts);
-          if (selected != null && context.mounted) {
-            if (selected.personal) {
-              context.go('/notes/new?personal=true');
-            } else {
-              context.go('/notes/new?groupId=${selected.id}');
-            }
-          }
-        }
-      },
-      child: const Icon(SolarIconsBold.addCircle),
-    );
-  }
-
-  Future<_NoteContextTarget?> _pickContext(
-    BuildContext context,
-    List<_NoteContextTarget> contexts,
-  ) {
-    return showModalBottomSheet<_NoteContextTarget>(
-      context: context,
-      showDragHandle: true,
-      builder: (ctx) => Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Text(
-              'Выберите группу',
-              style: Theme.of(ctx).textTheme.titleMedium,
-            ),
-          ),
-          ...contexts.map(
-            (c) => ListTile(
-              leading: Icon(
-                c.personal
-                    ? SolarIconsOutline.user
-                    : SolarIconsOutline.usersGroupRounded,
-              ),
-              title: Text(c.title),
-              onTap: () => Navigator.pop(ctx, c),
-            ),
-          ),
-          const SizedBox(height: 16),
-        ],
+        },
+        child: Icon(
+          isGrid ? SolarIconsOutline.listDown : SolarIconsOutline.widget,
+          key: ValueKey(isGrid),
+          size: 20,
+          color: AppColors.white,
+        ),
       ),
     );
   }

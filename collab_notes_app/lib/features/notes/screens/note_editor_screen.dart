@@ -531,6 +531,7 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
     final target = await showModalBottomSheet<_MoveContextTarget>(
       context: context,
       showDragHandle: true,
+      useRootNavigator: true,
       builder: (ctx) => Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -595,6 +596,7 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
     final picked = await showModalBottomSheet<String?>(
       context: context,
       showDragHandle: true,
+      useRootNavigator: true,
       builder: (ctx) => SafeArea(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),

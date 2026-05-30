@@ -62,6 +62,7 @@ class ChatsListScreen extends ConsumerWidget {
     final picked = await showModalBottomSheet<Map<String, String>>(
       context: context,
       isScrollControlled: true,
+      useRootNavigator: true,
       builder: (_) => const _UserSearchSheet(),
     );
     if (picked != null && context.mounted) {
@@ -75,6 +76,7 @@ class ChatsListScreen extends ConsumerWidget {
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
+      useRootNavigator: true,
       builder: (_) => const _GroupsManagerSheet(),
     );
   }
@@ -112,7 +114,11 @@ class _PersonalTab extends ConsumerWidget {
               final c = list[i];
               final displayName = _displayName(c.user);
               final avatarUrl = _avatarUrl(c.user);
-              final preview = c.lastMessage.body;
+              final preview = c.lastMessage.body.trim().isNotEmpty
+                  ? c.lastMessage.body
+                  : c.lastMessage.imageUrl != null
+                      ? 'Фото'
+                      : '';
               return ListTile(
                 leading: CircleAvatar(
                   backgroundImage:
@@ -362,6 +368,7 @@ class _GroupsManagerSheet extends ConsumerWidget {
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
+      useRootNavigator: true,
       builder: (_) => const CreateGroupSheet(),
     );
   }
@@ -371,6 +378,7 @@ class _GroupsManagerSheet extends ConsumerWidget {
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
+      useRootNavigator: true,
       builder: (_) => InviteMemberSheet(groupId: id, groupTitle: title),
     );
   }

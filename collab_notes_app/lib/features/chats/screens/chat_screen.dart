@@ -419,12 +419,89 @@ class _MessageBubble extends StatelessWidget {
     this.onNoteTap,
   });
 
+  bool get _isImageOnly => imageUrl != null && body.trim().isEmpty;
+
   @override
   Widget build(BuildContext context) {
     final formatter = DateFormat('HH:mm');
     final bg = mine ? AppColors.white : AppColors.bg2;
     final fg = mine ? AppColors.fgContainer : AppColors.white;
     final parsedNoteColor = _safeColor(noteColorLabel);
+
+    if (_isImageOnly) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Row(
+          mainAxisAlignment:
+              mine ? MainAxisAlignment.end : MainAxisAlignment.start,
+          children: [
+            Flexible(
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxWidth: MediaQuery.of(context).size.width * 0.75,
+                ),
+                child: Column(
+                  crossAxisAlignment:
+                      mine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (authorName != null)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 4, left: 4),
+                        child: Text(
+                          authorName!,
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.fgSoft.withValues(alpha: 0.75),
+                          ),
+                        ),
+                      ),
+                    GestureDetector(
+                      onTap: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) =>
+                                ChatImageViewerScreen(imageUrl: imageUrl!),
+                          ),
+                        );
+                      },
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(AppRadii.md),
+                        child: Image.network(
+                          imageUrl!,
+                          width: 220,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => Container(
+                            width: 220,
+                            height: 120,
+                            color: AppColors.bg2,
+                            alignment: Alignment.center,
+                            child:
+                                const Icon(SolarIconsOutline.galleryRemove),
+                          ),
+                        ),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4, left: 4),
+                      child: Text(
+                        formatter.format(time.toLocal()),
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: AppColors.fgSoft.withValues(alpha: 0.55),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(

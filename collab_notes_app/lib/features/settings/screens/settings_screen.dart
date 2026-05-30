@@ -213,6 +213,7 @@ class SettingsScreen extends ConsumerWidget {
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
+      useRootNavigator: true,
       builder: (_) => _EditProfileSheet(user: user),
     );
   }
