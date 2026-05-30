@@ -4,3 +4,4 @@ node_modules/
 build/
 *.g.dart
 _fb_key.json
+secrets.txt
