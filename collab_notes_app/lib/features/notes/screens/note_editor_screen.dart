@@ -57,7 +57,8 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
   }
 
   void _setupPresence() {
-    final ws = _wsClient = ref.read(wsClientProvider);
+    final ws = ref.read(wsClientProvider);
+    _wsClient = ws;
     ws.sendPresence(widget.noteId!, 'join');
     _wsSub = ws.events.listen((event) {
       if (event is NotePresenceEvent && event.noteId == widget.noteId) {
