@@ -40,6 +40,7 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
 
   // Presence & typing
   StreamSubscription? _wsSub;
+  WsClient? _wsClient;
   final List<NoteViewer> _viewers = [];
   String? _typingUserId;
   Timer? _typingTimer;
@@ -56,7 +57,7 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
   }
 
   void _setupPresence() {
-    final ws = ref.read(wsClientProvider);
+    final ws = _wsClient = ref.read(wsClientProvider);
     ws.sendPresence(widget.noteId!, 'join');
     _wsSub = ws.events.listen((event) {
       if (event is NotePresenceEvent && event.noteId == widget.noteId) {
@@ -92,7 +93,7 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
   @override
   void dispose() {
     if (!_isNew) {
-      ref.read(wsClientProvider).sendPresence(widget.noteId!, 'leave');
+      _wsClient?.sendPresence(widget.noteId!, 'leave');
     }
     _wsSub?.cancel();
     _typingTimer?.cancel();
