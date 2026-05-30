@@ -11,6 +11,9 @@ import '../providers/notes_provider.dart';
 import '../models/note_model.dart';
 import '../../../shared/theme/app_colors.dart';
 import '../../../shared/widgets/app_loader.dart';
+import '../../../shared/widgets/typing_indicator.dart';
+import '../../../shared/widgets/note_presence_bar.dart';
+import '../../../core/realtime/ws_client.dart';
 import '../../../features/groups/providers/groups_provider.dart';
 
 class NoteEditorScreen extends ConsumerStatefulWidget {
@@ -35,10 +38,65 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
     duration: const Duration(seconds: 3),
   );
 
+  // Presence & typing
+  StreamSubscription? _wsSub;
+  final List<NoteViewer> _viewers = [];
+  String? _typingUserId;
+  Timer? _typingTimer;
+  Timer? _typingDebounce;
+
   bool get _isNew => widget.noteId == null;
 
   @override
+  void initState() {
+    super.initState();
+    if (!_isNew) {
+      _setupPresence();
+    }
+  }
+
+  void _setupPresence() {
+    final ws = ref.read(wsClientProvider);
+    ws.sendPresence(widget.noteId!, 'join');
+    _wsSub = ws.events.listen((event) {
+      if (event is NotePresenceEvent && event.noteId == widget.noteId) {
+        setState(() {
+          if (event.action == 'join') {
+            if (!_viewers.any((v) => v.userId == event.userId)) {
+              _viewers.add(NoteViewer(
+                userId: event.userId,
+                displayName: event.displayName,
+              ));
+            }
+          } else {
+            _viewers.removeWhere((v) => v.userId == event.userId);
+          }
+        });
+      } else if (event is NoteTypingEvent && event.noteId == widget.noteId) {
+        setState(() => _typingUserId = event.userId);
+        _typingTimer?.cancel();
+        _typingTimer = Timer(const Duration(seconds: 3), () {
+          if (mounted) setState(() => _typingUserId = null);
+        });
+      }
+    });
+  }
+
+  void _emitTyping(String noteId) {
+    _typingDebounce?.cancel();
+    _typingDebounce = Timer(const Duration(milliseconds: 500), () {
+      ref.read(wsClientProvider).sendTyping(noteId);
+    });
+  }
+
+  @override
   void dispose() {
+    if (!_isNew) {
+      ref.read(wsClientProvider).sendPresence(widget.noteId!, 'leave');
+    }
+    _wsSub?.cancel();
+    _typingTimer?.cancel();
+    _typingDebounce?.cancel();
     _confettiCtrl.dispose();
     _debounce?.cancel();
     _titleCtrl.dispose();
@@ -130,6 +188,30 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
             ListView(
               padding: const EdgeInsets.all(16),
               children: [
+            // Presence bar (#2) + Typing indicator (#6)
+            if (_viewers.isNotEmpty || _typingUserId != null) ...[
+              if (_viewers.isNotEmpty)
+                NotePresenceBar(viewers: _viewers),
+              if (_typingUserId != null)
+                const Padding(
+                  padding: EdgeInsets.only(top: 4, bottom: 4),
+                  child: Row(
+                    children: [
+                      TypingIndicator(),
+                      SizedBox(width: 6),
+                      Text(
+                        'печатает...',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: AppColors.fgSoft,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              const SizedBox(height: 8),
+            ],
+
             // Title
             TextField(
               controller: _titleCtrl,
@@ -144,7 +226,10 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
                 contentPadding: EdgeInsets.zero,
                 filled: false,
               ),
-              onChanged: (_) => _onEdited(note.id),
+              onChanged: (_) {
+                _onEdited(note.id);
+                _emitTyping(note.id);
+              },
             ),
             if (note.colorLabel != null) ...[
               const SizedBox(height: 4),
@@ -181,7 +266,10 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
                 contentPadding: EdgeInsets.zero,
                 filled: false,
               ),
-              onChanged: (_) => _onEdited(note.id),
+              onChanged: (_) {
+                _onEdited(note.id);
+                _emitTyping(note.id);
+              },
             ),
             const Divider(height: 32),
 
@@ -698,7 +786,7 @@ class _NewNoteEditorState extends ConsumerState<_NewNoteEditor> {
   }
 }
 
-class _ChecklistItemTile extends StatelessWidget {
+class _ChecklistItemTile extends StatefulWidget {
   final ChecklistItem item;
   final String noteId;
   final int index;
@@ -715,39 +803,82 @@ class _ChecklistItemTile extends StatelessWidget {
   });
 
   @override
+  State<_ChecklistItemTile> createState() => _ChecklistItemTileState();
+}
+
+class _ChecklistItemTileState extends State<_ChecklistItemTile>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _bounceCtrl = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 350),
+  );
+  late final Animation<double> _bounceAnim = TweenSequence<double>([
+    TweenSequenceItem(tween: Tween(begin: 1.0, end: 1.3), weight: 40),
+    TweenSequenceItem(tween: Tween(begin: 1.3, end: 0.9), weight: 30),
+    TweenSequenceItem(tween: Tween(begin: 0.9, end: 1.0), weight: 30),
+  ]).animate(CurvedAnimation(parent: _bounceCtrl, curve: Curves.easeOut));
+
+  @override
+  void didUpdateWidget(covariant _ChecklistItemTile old) {
+    super.didUpdateWidget(old);
+    if (old.item.completed != widget.item.completed && widget.item.completed) {
+      _bounceCtrl.forward(from: 0);
+      HapticFeedback.lightImpact();
+    }
+  }
+
+  @override
+  void dispose() {
+    _bounceCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Material(
       color: Colors.transparent,
       child: Row(
         children: [
           ReorderableDragStartListener(
-            index: index,
+            index: widget.index,
             child: const Padding(
               padding: EdgeInsets.symmetric(horizontal: 4),
               child: Icon(Icons.drag_handle, size: 20, color: AppColors.fgSoft),
             ),
           ),
-          Checkbox(
-            value: item.completed,
-            onChanged: (v) => onToggle(v ?? false),
+          AnimatedBuilder(
+            animation: _bounceAnim,
+            builder: (context, child) => Transform.scale(
+              scale: _bounceAnim.value,
+              child: child,
+            ),
+            child: Checkbox(
+              value: widget.item.completed,
+              onChanged: (v) => widget.onToggle(v ?? false),
+            ),
           ),
           Expanded(
-            child: Text(
-              item.text,
-              style: item.completed
+            child: AnimatedDefaultTextStyle(
+              duration: const Duration(milliseconds: 300),
+              style: widget.item.completed
                   ? TextStyle(
                       decoration: TextDecoration.lineThrough,
                       color: Theme.of(context)
                           .colorScheme
                           .onSurface
                           .withValues(alpha: 0.5),
+                      fontSize: 14,
                     )
-                  : null,
+                  : TextStyle(
+                      color: Theme.of(context).colorScheme.onSurface,
+                      fontSize: 14,
+                    ),
+              child: Text(widget.item.text),
             ),
           ),
           IconButton(
             icon: const Icon(Icons.close, size: 16),
-            onPressed: onDelete,
+            onPressed: widget.onDelete,
             visualDensity: VisualDensity.compact,
           ),
         ],

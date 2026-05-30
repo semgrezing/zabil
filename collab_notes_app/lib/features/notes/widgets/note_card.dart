@@ -1,10 +1,13 @@
+import 'dart:math' as math;
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
 import 'package:solar_icons/solar_icons.dart';
 import '../models/note_model.dart';
 import '../../../shared/theme/app_colors.dart';
 import '../../../shared/theme/app_dimensions.dart';
 
-class NoteCard extends StatelessWidget {
+class NoteCard extends StatefulWidget {
   final NoteModel note;
   final VoidCallback? onTap;
   final VoidCallback? onArchive;
@@ -12,6 +15,7 @@ class NoteCard extends StatelessWidget {
   final VoidCallback? onMove;
   final VoidCallback? onTogglePin;
   final ValueChanged<String?>? onColorChanged;
+  final bool compactMode;
 
   const NoteCard({
     super.key,
@@ -22,24 +26,53 @@ class NoteCard extends StatelessWidget {
     this.onMove,
     this.onTogglePin,
     this.onColorChanged,
+    this.compactMode = false,
   });
 
   @override
+  State<NoteCard> createState() => _NoteCardState();
+}
+
+class _NoteCardState extends State<NoteCard> {
+  double _dragProgress = 0.0;
+  double _dragSign = 0.0;
+
+  NoteModel get note => widget.note;
+  VoidCallback? get onTap => widget.onTap;
+  VoidCallback? get onArchive => widget.onArchive;
+  VoidCallback? get onDelete => widget.onDelete;
+  VoidCallback? get onMove => widget.onMove;
+  VoidCallback? get onTogglePin => widget.onTogglePin;
+  ValueChanged<String?>? get onColorChanged => widget.onColorChanged;
+
+  @override
   Widget build(BuildContext context) {
-    final labelColor = _parseColor(note.colorLabel);
-    final cardRadius = BorderRadius.circular(AppRadii.sm);
+    final cardRadius = BorderRadius.circular(AppRadii.md);
+
+    final double clampedProgress = _dragProgress.clamp(0.0, 1.0);
+    final double tiltAngle = clampedProgress * 3.0 * (math.pi / 180) * _dragSign;
+    final double extraElevation = clampedProgress * 8.0;
+
+    if (widget.compactMode) {
+      return _buildCard(context, cardRadius);
+    }
 
     return Dismissible(
       key: Key('note_dismiss_${note.id}'),
       direction: DismissDirection.horizontal,
+      onUpdate: (details) {
+        setState(() {
+          _dragProgress = details.progress;
+          _dragSign =
+              details.direction == DismissDirection.startToEnd ? 1.0 : -1.0;
+        });
+      },
       confirmDismiss: (direction) async {
         if (direction == DismissDirection.startToEnd) {
-          // Swipe right → delete with confirmation
           return await _confirmDelete(context);
         } else {
-          // Swipe left → archive
           onArchive?.call();
-          return false; // Don't remove the widget; callback handles state
+          return false;
         }
       },
       onDismissed: (direction) {
@@ -63,7 +96,32 @@ class NoteCard extends StatelessWidget {
         label: note.archived ? 'Разархивировать' : 'Архивировать',
         borderRadius: cardRadius,
       ),
-      child: _buildCard(context, labelColor, cardRadius),
+      child: Transform(
+        alignment: Alignment.center,
+        transform: Matrix4.identity()
+          ..setEntry(3, 2, 0.001)
+          ..rotateZ(tiltAngle),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOut,
+          decoration: clampedProgress > 0.01
+              ? BoxDecoration(
+                  borderRadius: cardRadius,
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(
+                        alpha: 0.2 + clampedProgress * 0.15,
+                      ),
+                      blurRadius: 8 + extraElevation * 2,
+                      spreadRadius: extraElevation * 0.3,
+                      offset: Offset(0, 4 + extraElevation),
+                    ),
+                  ],
+                )
+              : null,
+          child: _buildCard(context, cardRadius),
+        ),
+      ),
     );
   }
 
@@ -75,9 +133,8 @@ class NoteCard extends StatelessWidget {
     required BorderRadius borderRadius,
   }) {
     return Container(
-      margin: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.15),
+        color: color.withValues(alpha: 0.12),
         borderRadius: borderRadius,
       ),
       alignment: alignment,
@@ -102,277 +159,275 @@ class NoteCard extends StatelessWidget {
 
   Widget _buildCard(
     BuildContext context,
-    Color? labelColor,
     BorderRadius cardRadius,
   ) {
     final theme = Theme.of(context);
+    final labelColor = _parseColor(note.colorLabel);
     final completedItems =
         note.checklistItems.where((i) => i.completed).length;
     final totalItems = note.checklistItems.length;
 
-    // Card background: bg2 base, optionally tinted by colorLabel
-    final cardColor = labelColor != null
-        ? Color.lerp(AppColors.bg2, labelColor, 0.06)!
-        : AppColors.bg2;
-
-    return Container(
-      margin: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
-      decoration: BoxDecoration(
-        color: cardColor,
-        borderRadius: cardRadius,
-        border: Border.all(
-          color: labelColor?.withValues(alpha: 0.2) ?? AppColors.borderSubtle,
-          width: 1,
-        ),
-      ),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: cardRadius,
-        child: IntrinsicHeight(
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // Color label: left border accent
-              if (labelColor != null)
-                Container(
-                  width: 4,
-                  decoration: BoxDecoration(
-                    color: labelColor,
-                    borderRadius: const BorderRadius.only(
-                      topLeft: Radius.circular(AppRadii.sm),
-                      bottomLeft: Radius.circular(AppRadii.sm),
-                    ),
-                  ),
-                ),
-              // Main content
-              Expanded(
-                child: Padding(
-                  padding: EdgeInsets.only(
-                    left: labelColor != null ? AppSpacing.md : AppSpacing.lg,
-                    right: AppSpacing.sm,
-                    top: AppSpacing.lg,
-                    bottom: AppSpacing.lg,
-                  ),
-                  child: note.images.isNotEmpty
-                      ? Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Expanded(
-                              child: _buildContent(
-                                context,
-                                theme,
-                                completedItems,
-                                totalItems,
-                              ),
+    return ClipRRect(
+      borderRadius: cardRadius,
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+        child: Container(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: labelColor != null
+                  ? [
+                      labelColor.withValues(alpha: 0.10),
+                      labelColor.withValues(alpha: 0.04),
+                    ]
+                  : [
+                      Colors.white.withValues(alpha: 0.07),
+                      Colors.white.withValues(alpha: 0.03),
+                    ],
+            ),
+            borderRadius: cardRadius,
+            border: Border.all(
+              color: labelColor?.withValues(alpha: 0.25) ??
+                  Colors.white.withValues(alpha: 0.08),
+              width: 1,
+            ),
+          ),
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: onTap,
+              borderRadius: cardRadius,
+              splashColor: Colors.white.withValues(alpha: 0.05),
+              highlightColor: Colors.white.withValues(alpha: 0.03),
+              child: Padding(
+                padding: const EdgeInsets.all(AppSpacing.lg),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Header: color dot + group tag + menu
+                    Row(
+                      children: [
+                        if (labelColor != null) ...[
+                          Container(
+                            width: 8,
+                            height: 8,
+                            decoration: BoxDecoration(
+                              color: labelColor,
+                              shape: BoxShape.circle,
+                              boxShadow: [
+                                BoxShadow(
+                                  color: labelColor.withValues(alpha: 0.4),
+                                  blurRadius: 6,
+                                ),
+                              ],
                             ),
-                            const SizedBox(width: AppSpacing.md),
-                            _NoteImagePreview(images: note.images),
-                          ],
-                        )
-                      : _buildContent(
-                          context,
-                          theme,
-                          completedItems,
-                          totalItems,
-                        ),
+                          ),
+                          const SizedBox(width: AppSpacing.sm),
+                        ],
+                        if (!note.isPersonal && note.groupTitle != null) ...[
+                          _GroupTag(groupTitle: note.groupTitle!),
+                          const SizedBox(width: AppSpacing.sm),
+                        ],
+                        if (note.pinned)
+                          TweenAnimationBuilder<double>(
+                            key: ValueKey(note.pinned),
+                            tween: Tween<double>(begin: 1.4, end: 1.0),
+                            duration: const Duration(milliseconds: 500),
+                            curve: Curves.elasticOut,
+                            builder: (context, scale, child) {
+                              return Transform.scale(
+                                scale: scale,
+                                child: child,
+                              );
+                            },
+                            child: const Icon(
+                              SolarIconsBold.pin,
+                              size: 12,
+                              color: AppColors.fgSoft,
+                            ),
+                          ),
+                        const Spacer(),
+                        if (!widget.compactMode)
+                          _buildPopupMenu(),
+                      ],
+                    ),
+
+                    const SizedBox(height: AppSpacing.md),
+
+                    // Title + optional image
+                    if (note.images.isNotEmpty)
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(child: _buildTitleAndContent(theme)),
+                          const SizedBox(width: AppSpacing.md),
+                          _NoteImagePreview(images: note.images),
+                        ],
+                      )
+                    else
+                      _buildTitleAndContent(theme),
+
+                    // Checklist progress
+                    if (totalItems > 0) ...[
+                      const SizedBox(height: AppSpacing.md),
+                      _ChecklistProgress(
+                        completed: completedItems,
+                        total: totalItems,
+                      ),
+                    ],
+
+                    // Footer
+                    const SizedBox(height: AppSpacing.md),
+                    _UpdatedByRow(
+                      creator: note.creator,
+                      updatedAt: note.updatedAt,
+                    ),
+                  ],
                 ),
               ),
-            ],
+            ),
           ),
         ),
       ),
     );
   }
 
-  Widget _buildContent(
-    BuildContext context,
-    ThemeData theme,
-    int completedItems,
-    int totalItems,
-  ) {
+  Widget _buildTitleAndContent(ThemeData theme) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
-        // Header row: title + popup menu
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Group tag
-                  if (!note.isPersonal && note.groupTitle != null) ...[
-                    _GroupTag(groupTitle: note.groupTitle!),
-                    const SizedBox(height: AppSpacing.xs),
-                  ],
-                  // Title
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      if (note.pinned) ...[
-                        const Padding(
-                          padding: EdgeInsets.only(top: 2, right: 4),
-                          child: Icon(
-                            SolarIconsBold.pin,
-                            size: 13,
-                            color: AppColors.fgSoft,
-                          ),
-                        ),
-                      ],
-                      Expanded(
-                        child: Text(
-                          note.title,
-                          style: theme.textTheme.titleSmall?.copyWith(
-                            fontWeight: FontWeight.w600,
-                            color: AppColors.white,
-                            height: 1.3,
-                          ),
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-            // Popup menu
-            SizedBox(
-              width: 32,
-              height: 32,
-              child: PopupMenuButton<String>(
-                icon: const Icon(
-                  SolarIconsOutline.menuDots,
-                  size: 16,
-                  color: AppColors.fgSoft,
-                ),
-                padding: EdgeInsets.zero,
-                splashRadius: 16,
-                position: PopupMenuPosition.under,
-                color: AppColors.bg3,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(AppRadii.sm),
-                ),
-                onSelected: (value) {
-                  if (value == 'pin') onTogglePin?.call();
-                  if (value == 'archive') onArchive?.call();
-                  if (value == 'move') onMove?.call();
-                  if (value == 'color') _pickColor(context);
-                  if (value == 'delete') onDelete?.call();
-                },
-                itemBuilder: (_) => [
-                  PopupMenuItem(
-                    value: 'pin',
-                    child: Row(
-                      children: [
-                        Icon(
-                          note.pinned
-                              ? SolarIconsBold.pin
-                              : SolarIconsOutline.pin,
-                          size: 18,
-                          color: AppColors.white,
-                        ),
-                        const SizedBox(width: AppSpacing.sm),
-                        Text(
-                          note.pinned ? 'Открепить' : 'Закрепить',
-                          style: const TextStyle(color: AppColors.white),
-                        ),
-                      ],
-                    ),
-                  ),
-                  PopupMenuItem(
-                    value: 'archive',
-                    child: Row(
-                      children: [
-                        Icon(
-                          note.archived
-                              ? SolarIconsBold.archiveUp
-                              : SolarIconsOutline.archive,
-                          size: 18,
-                          color: AppColors.white,
-                        ),
-                        const SizedBox(width: AppSpacing.sm),
-                        Text(
-                          note.archived ? 'Разархивировать' : 'Архивировать',
-                          style: const TextStyle(color: AppColors.white),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const PopupMenuItem(
-                    value: 'move',
-                    child: Row(
-                      children: [
-                        Icon(Icons.swap_horiz,
-                            size: 18, color: AppColors.white),
-                        SizedBox(width: AppSpacing.sm),
-                        Text('Переместить',
-                            style: TextStyle(color: AppColors.white)),
-                      ],
-                    ),
-                  ),
-                  const PopupMenuItem(
-                    value: 'color',
-                    child: Row(
-                      children: [
-                        Icon(Icons.palette_outlined,
-                            size: 18, color: AppColors.white),
-                        SizedBox(width: AppSpacing.sm),
-                        Text('Цветовая метка',
-                            style: TextStyle(color: AppColors.white)),
-                      ],
-                    ),
-                  ),
-                  const PopupMenuItem(
-                    value: 'delete',
-                    child: Row(
-                      children: [
-                        Icon(SolarIconsOutline.trashBinTrash,
-                            size: 18, color: AppColors.negative),
-                        SizedBox(width: AppSpacing.sm),
-                        Text('Удалить',
-                            style: TextStyle(color: AppColors.negative)),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
+        Text(
+          note.title,
+          style: const TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w600,
+            color: AppColors.white,
+            height: 1.3,
+          ),
+          maxLines: widget.compactMode ? 2 : 2,
+          overflow: TextOverflow.ellipsis,
         ),
-
-        // Content preview
         if (note.content.isNotEmpty) ...[
-          const SizedBox(height: AppSpacing.sm),
+          const SizedBox(height: AppSpacing.xs),
           Text(
             note.content,
-            maxLines: 2,
+            maxLines: widget.compactMode ? 3 : 2,
             overflow: TextOverflow.ellipsis,
-            style: theme.textTheme.bodySmall?.copyWith(
+            style: const TextStyle(
+              fontSize: 13,
               color: AppColors.fgSoft,
-              height: 1.4,
+              height: 1.5,
             ),
           ),
         ],
+      ],
+    );
+  }
 
-        // Checklist progress
-        if (totalItems > 0) ...[
-          const SizedBox(height: AppSpacing.md),
-          _ChecklistProgress(
-            completed: completedItems,
-            total: totalItems,
+  Widget _buildPopupMenu() {
+    return SizedBox(
+      width: 28,
+      height: 28,
+      child: PopupMenuButton<String>(
+        icon: const Icon(
+          SolarIconsOutline.menuDots,
+          size: 14,
+          color: AppColors.fgSoft,
+        ),
+        padding: EdgeInsets.zero,
+        splashRadius: 14,
+        position: PopupMenuPosition.under,
+        color: AppColors.bg3,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppRadii.sm),
+        ),
+        onSelected: (value) {
+          if (value == 'pin') onTogglePin?.call();
+          if (value == 'archive') onArchive?.call();
+          if (value == 'move') onMove?.call();
+          if (value == 'color') _pickColor(context);
+          if (value == 'delete') onDelete?.call();
+        },
+        itemBuilder: (_) => [
+          PopupMenuItem(
+            value: 'pin',
+            child: Row(
+              children: [
+                Icon(
+                  note.pinned
+                      ? SolarIconsBold.pin
+                      : SolarIconsOutline.pin,
+                  size: 18,
+                  color: AppColors.white,
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                Text(
+                  note.pinned ? 'Открепить' : 'Закрепить',
+                  style: const TextStyle(color: AppColors.white),
+                ),
+              ],
+            ),
+          ),
+          PopupMenuItem(
+            value: 'archive',
+            child: Row(
+              children: [
+                Icon(
+                  note.archived
+                      ? SolarIconsBold.archiveUp
+                      : SolarIconsOutline.archive,
+                  size: 18,
+                  color: AppColors.white,
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                Text(
+                  note.archived ? 'Разархивировать' : 'Архивировать',
+                  style: const TextStyle(color: AppColors.white),
+                ),
+              ],
+            ),
+          ),
+          const PopupMenuItem(
+            value: 'move',
+            child: Row(
+              children: [
+                Icon(Icons.swap_horiz,
+                    size: 18, color: AppColors.white),
+                SizedBox(width: AppSpacing.sm),
+                Text('Переместить',
+                    style: TextStyle(color: AppColors.white)),
+              ],
+            ),
+          ),
+          const PopupMenuItem(
+            value: 'color',
+            child: Row(
+              children: [
+                Icon(Icons.palette_outlined,
+                    size: 18, color: AppColors.white),
+                SizedBox(width: AppSpacing.sm),
+                Text('Цветовая метка',
+                    style: TextStyle(color: AppColors.white)),
+              ],
+            ),
+          ),
+          const PopupMenuItem(
+            value: 'delete',
+            child: Row(
+              children: [
+                Icon(SolarIconsOutline.trashBinTrash,
+                    size: 18, color: AppColors.negative),
+                SizedBox(width: AppSpacing.sm),
+                Text('Удалить',
+                    style: TextStyle(color: AppColors.negative)),
+              ],
+            ),
           ),
         ],
-
-        // Updated by info
-        const SizedBox(height: AppSpacing.md),
-        _UpdatedByRow(
-          creator: note.creator,
-          updatedAt: note.updatedAt,
-        ),
-      ],
+      ),
     );
   }
 
@@ -454,7 +509,7 @@ class _ChecklistProgress extends StatelessWidget {
         ),
         const SizedBox(width: AppSpacing.xs),
         Text(
-          '$completed из $total',
+          '$completed / $total',
           style: TextStyle(
             fontSize: 12,
             color: isComplete ? AppColors.success : AppColors.fgSoft,
@@ -467,8 +522,8 @@ class _ChecklistProgress extends StatelessWidget {
             borderRadius: BorderRadius.circular(AppRadii.xs),
             child: LinearProgressIndicator(
               value: progress,
-              minHeight: 4,
-              backgroundColor: AppColors.bg3,
+              minHeight: 3,
+              backgroundColor: Colors.white.withValues(alpha: 0.06),
               valueColor: AlwaysStoppedAnimation<Color>(
                 isComplete ? AppColors.success : AppColors.white,
               ),
@@ -496,15 +551,39 @@ class _UpdatedByRow extends StatelessWidget {
     final name = creator['displayName'] ?? creator['username'] ?? '';
     final relativeTime = _formatRelativeTime(updatedAt);
 
-    return Text(
-      'Обновлено $name, $relativeTime',
-      style: const TextStyle(
-        fontSize: 11,
-        color: AppColors.fgSoft,
-        fontWeight: FontWeight.w400,
-      ),
-      maxLines: 1,
-      overflow: TextOverflow.ellipsis,
+    return Row(
+      children: [
+        Container(
+          width: 18,
+          height: 18,
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.08),
+            shape: BoxShape.circle,
+          ),
+          alignment: Alignment.center,
+          child: Text(
+            name.isNotEmpty ? name[0].toUpperCase() : '?',
+            style: const TextStyle(
+              fontSize: 9,
+              fontWeight: FontWeight.w600,
+              color: AppColors.fgSoft,
+            ),
+          ),
+        ),
+        const SizedBox(width: AppSpacing.xs + 2),
+        Expanded(
+          child: Text(
+            '$name  $relativeTime',
+            style: const TextStyle(
+              fontSize: 11,
+              color: AppColors.fgSoft,
+              fontWeight: FontWeight.w400,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      ],
     );
   }
 
@@ -513,10 +592,9 @@ class _UpdatedByRow extends StatelessWidget {
     final diff = now.difference(dateTime);
 
     if (diff.inMinutes < 1) return 'только что';
-    if (diff.inMinutes < 60) return '${diff.inMinutes} мин. назад';
-    if (diff.inHours < 24) return '${diff.inHours} ч. назад';
-    if (diff.inDays < 7) return '${diff.inDays} дн. назад';
-    // Fallback to date
+    if (diff.inMinutes < 60) return '${diff.inMinutes} мин.';
+    if (diff.inHours < 24) return '${diff.inHours} ч.';
+    if (diff.inDays < 7) return '${diff.inDays} дн.';
     final d = dateTime;
     return '${d.day.toString().padLeft(2, '0')}.${d.month.toString().padLeft(2, '0')}.${d.year}';
   }
@@ -534,10 +612,10 @@ class _GroupTag extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(
         horizontal: AppSpacing.sm,
-        vertical: 2,
+        vertical: 3,
       ),
       decoration: BoxDecoration(
-        color: AppColors.bg3,
+        color: Colors.white.withValues(alpha: 0.06),
         borderRadius: BorderRadius.circular(AppRadii.xs),
       ),
       child: Text(
@@ -546,7 +624,7 @@ class _GroupTag extends StatelessWidget {
           fontSize: 10,
           fontWeight: FontWeight.w500,
           color: AppColors.fgSoft,
-          letterSpacing: 0.2,
+          letterSpacing: 0.3,
         ),
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
@@ -564,79 +642,59 @@ class _NoteImagePreview extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const size = 52.0;
-    const offset = 5.0;
-    final radius = BorderRadius.circular(AppRadii.xs);
+    const size = 48.0;
+    final radius = BorderRadius.circular(AppRadii.sm);
     final first = images.first;
 
-    return SizedBox(
-      width: size + (images.length > 1 ? offset : 0),
-      height: size + (images.length > 1 ? offset : 0),
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          if (images.length > 1)
-            Positioned(
-              left: offset,
-              top: offset,
-              child: Container(
-                width: size,
-                height: size,
-                decoration: BoxDecoration(
-                  color: AppColors.bg3,
-                  borderRadius: radius,
-                  border: Border.all(color: AppColors.borderSubtle),
-                ),
-              ),
-            ),
-          ClipRRect(
-            borderRadius: radius,
-            child: Image.network(
-              first.url,
+    return Stack(
+      children: [
+        ClipRRect(
+          borderRadius: radius,
+          child: Image.network(
+            first.url,
+            width: size,
+            height: size,
+            fit: BoxFit.cover,
+            errorBuilder: (context, _, __) => Container(
               width: size,
               height: size,
-              fit: BoxFit.cover,
-              errorBuilder: (context, _, __) => Container(
-                width: size,
-                height: size,
-                decoration: BoxDecoration(
-                  color: AppColors.bg3,
-                  borderRadius: radius,
-                ),
-                alignment: Alignment.center,
-                child: const Icon(
-                  SolarIconsOutline.gallery,
-                  size: 18,
-                  color: AppColors.fgSoft,
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.06),
+                borderRadius: radius,
+              ),
+              alignment: Alignment.center,
+              child: const Icon(
+                SolarIconsOutline.gallery,
+                size: 18,
+                color: AppColors.fgSoft,
+              ),
+            ),
+          ),
+        ),
+        if (images.length > 1)
+          Positioned(
+            right: 3,
+            bottom: 3,
+            child: Container(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 5,
+                vertical: 2,
+              ),
+              decoration: BoxDecoration(
+                color: Colors.black.withValues(alpha: 0.6),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Text(
+                '+${images.length - 1}',
+                style: const TextStyle(
+                  fontSize: 9,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.white,
                 ),
               ),
             ),
           ),
-          if (images.length > 1)
-            Positioned(
-              right: 0,
-              bottom: 0,
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 4,
-                  vertical: 2,
-                ),
-                decoration: BoxDecoration(
-                  color: AppColors.bg1.withValues(alpha: 0.8),
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                child: Text(
-                  '+${images.length - 1}',
-                  style: const TextStyle(
-                    fontSize: 9,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.white,
-                  ),
-                ),
-              ),
-            ),
-        ],
-      ),
+      ],
     );
   }
 }

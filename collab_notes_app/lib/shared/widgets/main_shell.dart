@@ -51,15 +51,28 @@ class MainShell extends ConsumerWidget {
     final currentIndex = _tabs.indexWhere((t) => location.startsWith(t.path));
 
     return Scaffold(
+      extendBody: true,
       body: child,
       bottomNavigationBar: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+        padding: EdgeInsets.fromLTRB(
+          12,
+          0,
+          12,
+          MediaQuery.of(context).padding.bottom + 8,
+        ),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(16),
           child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+            filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
             child: Container(
-              color: AppColors.bg2.withValues(alpha: 0.8),
+              decoration: BoxDecoration(
+                color: AppColors.bg2.withValues(alpha: 0.75),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: Colors.white.withValues(alpha: 0.06),
+                  width: 1,
+                ),
+              ),
               child: BottomNavigationBar(
                 currentIndex: currentIndex < 0 ? 0 : currentIndex,
                 onTap: (index) {
@@ -72,11 +85,11 @@ class MainShell extends ConsumerWidget {
                 items: _tabs
                     .map((t) => BottomNavigationBarItem(
                           icon: Padding(
-                            padding: const EdgeInsets.only(bottom: 8),
+                            padding: const EdgeInsets.only(bottom: 6),
                             child: Icon(t.icon),
                           ),
                           activeIcon: Padding(
-                            padding: const EdgeInsets.only(bottom: 8),
+                            padding: const EdgeInsets.only(bottom: 6),
                             child: Icon(t.activeIcon),
                           ),
                           label: t.label,
