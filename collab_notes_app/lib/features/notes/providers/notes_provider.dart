@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/note_model.dart';
 import '../services/notes_service.dart';
+import '../../auth/providers/auth_provider.dart';
 
 final notesServiceProvider = Provider<NotesService>((ref) => NotesService());
 const _unset = Object();
@@ -117,6 +118,9 @@ class NotesNotifier extends AsyncNotifier<List<NoteModel>> {
 
   @override
   Future<List<NoteModel>> build() async {
+    final auth = ref.watch(authStateProvider);
+    if (auth.valueOrNull?.isLoggedIn != true) return [];
+
     if (!_disposeHookRegistered) {
       _disposeHookRegistered = true;
       ref.onDispose(() {
@@ -124,6 +128,7 @@ class NotesNotifier extends AsyncNotifier<List<NoteModel>> {
       });
     }
 
+    _clearCaches();
     final filter = ref.watch(notesFilterProvider);
     final normalizedSearch = _normalizeSearch(filter.search);
     final contextKey = _contextKey(

@@ -353,6 +353,12 @@ class _GroupDetailScreenState extends ConsumerState<GroupDetailScreen> {
     setState(() => _updatingAvatar = true);
     try {
       await ref.read(groupsProvider.notifier).uploadAvatar(group.id, cropped.path);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Не удалось обновить аватарку: $e')),
+        );
+      }
     } finally {
       if (mounted) setState(() => _updatingAvatar = false);
     }

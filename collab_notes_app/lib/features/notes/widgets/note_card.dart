@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:solar_icons/solar_icons.dart';
 import '../models/note_model.dart';
+import '../screens/image_viewer_screen.dart';
 import '../../../shared/theme/app_colors.dart';
 import '../../../shared/theme/app_dimensions.dart';
 
@@ -160,19 +161,18 @@ class _NoteCardState extends State<NoteCard> {
     BuildContext context,
     BorderRadius cardRadius,
   ) {
-    final theme = Theme.of(context);
     final labelColor = _parseColor(note.colorLabel);
     final completedItems =
         note.checklistItems.where((i) => i.completed).length;
     final totalItems = note.checklistItems.length;
 
-    return Container(
-      decoration: BoxDecoration(
+    return GestureDetector(
+      onLongPressStart: (details) => _showContextMenu(context, details.globalPosition),
+      onSecondaryTapUp: (details) => _showContextMenu(context, details.globalPosition),
+      child: Material(
         color: const Color(0xFF1A1A1A),
         borderRadius: cardRadius,
-      ),
-      child: Material(
-        color: Colors.transparent,
+        clipBehavior: Clip.antiAlias,
         child: InkWell(
           onTap: onTap,
           borderRadius: cardRadius,
@@ -184,68 +184,65 @@ class _NoteCardState extends State<NoteCard> {
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                    // Header: color dot + group tag + menu
-                    Row(
-                      children: [
-                        if (labelColor != null) ...[
-                          Container(
-                            width: 8,
-                            height: 8,
-                            decoration: BoxDecoration(
-                              color: labelColor,
-                              shape: BoxShape.circle,
-                              boxShadow: [
-                                BoxShadow(
-                                  color: labelColor.withValues(alpha: 0.4),
-                                  blurRadius: 6,
-                                ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(width: AppSpacing.sm),
-                        ],
-                        if (!note.isPersonal && note.groupTitle != null) ...[
-                          _GroupTag(groupTitle: note.groupTitle!),
-                          const SizedBox(width: AppSpacing.sm),
-                        ],
-                        if (note.pinned)
-                          TweenAnimationBuilder<double>(
-                            key: ValueKey(note.pinned),
-                            tween: Tween<double>(begin: 1.4, end: 1.0),
-                            duration: const Duration(milliseconds: 500),
-                            curve: Curves.elasticOut,
-                            builder: (context, scale, child) {
-                              return Transform.scale(
-                                scale: scale,
-                                child: child,
-                              );
-                            },
-                            child: const Icon(
-                              SolarIconsBold.pin,
-                              size: 12,
-                              color: AppColors.fgSoft,
-                            ),
-                          ),
-                        const Spacer(),
-                        if (!widget.compactMode)
-                          _buildPopupMenu(),
-                      ],
+                // Title + pin icon
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        note.title,
+                        style: const TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.white,
+                          height: 1.3,
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
-
-                    const SizedBox(height: AppSpacing.md),
-
-                // Title + optional image
-                if (note.images.isNotEmpty)
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(child: _buildTitleAndContent(theme)),
-                      const SizedBox(width: AppSpacing.md),
-                      _NoteImagePreview(images: note.images),
+                    if (note.pinned) ...[
+                      const SizedBox(width: 4),
+                      TweenAnimationBuilder<double>(
+                        key: ValueKey(note.pinned),
+                        tween: Tween<double>(begin: 1.4, end: 1.0),
+                        duration: const Duration(milliseconds: 500),
+                        curve: Curves.elasticOut,
+                        builder: (context, scale, child) {
+                          return Transform.scale(scale: scale, child: child);
+                        },
+                        child: const Icon(
+                          SolarIconsBold.pin,
+                          size: 14,
+                          color: AppColors.fgSoft,
+                        ),
+                      ),
                     ],
-                  )
-                else
-                  _buildTitleAndContent(theme),
+                  ],
+                ),
+
+                // Content
+                if (note.content.isNotEmpty) ...[
+                  const SizedBox(height: AppSpacing.xs),
+                  Text(
+                    note.content,
+                    maxLines: widget.compactMode ? 3 : 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      color: AppColors.fgSoft,
+                      height: 1.5,
+                    ),
+                  ),
+                ],
+
+                // Images
+                if (note.images.isNotEmpty) ...[
+                  const SizedBox(height: AppSpacing.md),
+                  _NoteImagesRow(
+                    images: note.images,
+                    noteId: note.id,
+                  ),
+                ],
 
                 // Checklist progress
                 if (totalItems > 0) ...[
@@ -256,11 +253,34 @@ class _NoteCardState extends State<NoteCard> {
                   ),
                 ],
 
-                // Footer
+                // Footer: author + time, color dot
                 const SizedBox(height: AppSpacing.md),
-                _UpdatedByRow(
-                  creator: note.creator,
-                  updatedAt: note.updatedAt,
+                Row(
+                  children: [
+                    Expanded(
+                      child: _UpdatedByRow(
+                        creator: note.creator,
+                        updatedAt: note.updatedAt,
+                      ),
+                    ),
+                    if (labelColor != null) ...[
+                      const SizedBox(width: AppSpacing.sm),
+                      Container(
+                        width: 8,
+                        height: 8,
+                        decoration: BoxDecoration(
+                          color: labelColor,
+                          shape: BoxShape.circle,
+                          boxShadow: [
+                            BoxShadow(
+                              color: labelColor.withValues(alpha: 0.4),
+                              blurRadius: 6,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
               ],
             ),
@@ -270,141 +290,107 @@ class _NoteCardState extends State<NoteCard> {
     );
   }
 
-  Widget _buildTitleAndContent(ThemeData theme) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(
-          note.title,
-          style: const TextStyle(
-            fontSize: 15,
-            fontWeight: FontWeight.w600,
-            color: AppColors.white,
-            height: 1.3,
+  Future<void> _showContextMenu(BuildContext context, Offset position) async {
+    final value = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        position.dx,
+        position.dy,
+        position.dx,
+        position.dy,
+      ),
+      color: AppColors.bg3,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppRadii.sm),
+      ),
+      items: [
+        PopupMenuItem(
+          value: 'pin',
+          child: Row(
+            children: [
+              Icon(
+                note.pinned ? SolarIconsBold.pin : SolarIconsOutline.pin,
+                size: 18,
+                color: AppColors.white,
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              Text(
+                note.pinned ? 'Открепить' : 'Закрепить',
+                style: const TextStyle(color: AppColors.white),
+              ),
+            ],
           ),
-          maxLines: widget.compactMode ? 2 : 2,
-          overflow: TextOverflow.ellipsis,
         ),
-        if (note.content.isNotEmpty) ...[
-          const SizedBox(height: AppSpacing.xs),
-          Text(
-            note.content,
-            maxLines: widget.compactMode ? 3 : 2,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              fontSize: 13,
-              color: AppColors.fgSoft,
-              height: 1.5,
-            ),
+        PopupMenuItem(
+          value: 'archive',
+          child: Row(
+            children: [
+              Icon(
+                note.archived
+                    ? SolarIconsBold.archiveUp
+                    : SolarIconsOutline.archive,
+                size: 18,
+                color: AppColors.white,
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              Text(
+                note.archived ? 'Разархивировать' : 'Архивировать',
+                style: const TextStyle(color: AppColors.white),
+              ),
+            ],
           ),
-        ],
+        ),
+        const PopupMenuItem(
+          value: 'move',
+          child: Row(
+            children: [
+              Icon(Icons.swap_horiz, size: 18, color: AppColors.white),
+              SizedBox(width: AppSpacing.sm),
+              Text('Переместить', style: TextStyle(color: AppColors.white)),
+            ],
+          ),
+        ),
+        const PopupMenuItem(
+          value: 'color',
+          child: Row(
+            children: [
+              Icon(Icons.palette_outlined, size: 18, color: AppColors.white),
+              SizedBox(width: AppSpacing.sm),
+              Text('Цветовая метка', style: TextStyle(color: AppColors.white)),
+            ],
+          ),
+        ),
+        const PopupMenuItem(
+          value: 'delete',
+          child: Row(
+            children: [
+              Icon(SolarIconsOutline.trashBinTrash,
+                  size: 18, color: AppColors.negative),
+              SizedBox(width: AppSpacing.sm),
+              Text('Удалить', style: TextStyle(color: AppColors.negative)),
+            ],
+          ),
+        ),
       ],
     );
+
+    if (value == null || !mounted) return;
+    _handleMenuAction(value);
   }
 
-  Widget _buildPopupMenu() {
-    return SizedBox(
-      width: 28,
-      height: 28,
-      child: PopupMenuButton<String>(
-        icon: const Icon(
-          SolarIconsOutline.menuDots,
-          size: 14,
-          color: AppColors.fgSoft,
-        ),
-        padding: EdgeInsets.zero,
-        splashRadius: 14,
-        position: PopupMenuPosition.under,
-        color: AppColors.bg3,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(AppRadii.sm),
-        ),
-        onSelected: (value) {
-          if (value == 'pin') onTogglePin?.call();
-          if (value == 'archive') onArchive?.call();
-          if (value == 'move') onMove?.call();
-          if (value == 'color') _pickColor(context);
-          if (value == 'delete') onDelete?.call();
-        },
-        itemBuilder: (_) => [
-          PopupMenuItem(
-            value: 'pin',
-            child: Row(
-              children: [
-                Icon(
-                  note.pinned
-                      ? SolarIconsBold.pin
-                      : SolarIconsOutline.pin,
-                  size: 18,
-                  color: AppColors.white,
-                ),
-                const SizedBox(width: AppSpacing.sm),
-                Text(
-                  note.pinned ? 'Открепить' : 'Закрепить',
-                  style: const TextStyle(color: AppColors.white),
-                ),
-              ],
-            ),
-          ),
-          PopupMenuItem(
-            value: 'archive',
-            child: Row(
-              children: [
-                Icon(
-                  note.archived
-                      ? SolarIconsBold.archiveUp
-                      : SolarIconsOutline.archive,
-                  size: 18,
-                  color: AppColors.white,
-                ),
-                const SizedBox(width: AppSpacing.sm),
-                Text(
-                  note.archived ? 'Разархивировать' : 'Архивировать',
-                  style: const TextStyle(color: AppColors.white),
-                ),
-              ],
-            ),
-          ),
-          const PopupMenuItem(
-            value: 'move',
-            child: Row(
-              children: [
-                Icon(Icons.swap_horiz,
-                    size: 18, color: AppColors.white),
-                SizedBox(width: AppSpacing.sm),
-                Text('Переместить',
-                    style: TextStyle(color: AppColors.white)),
-              ],
-            ),
-          ),
-          const PopupMenuItem(
-            value: 'color',
-            child: Row(
-              children: [
-                Icon(Icons.palette_outlined,
-                    size: 18, color: AppColors.white),
-                SizedBox(width: AppSpacing.sm),
-                Text('Цветовая метка',
-                    style: TextStyle(color: AppColors.white)),
-              ],
-            ),
-          ),
-          const PopupMenuItem(
-            value: 'delete',
-            child: Row(
-              children: [
-                Icon(SolarIconsOutline.trashBinTrash,
-                    size: 18, color: AppColors.negative),
-                SizedBox(width: AppSpacing.sm),
-                Text('Удалить',
-                    style: TextStyle(color: AppColors.negative)),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
+  void _handleMenuAction(String action) {
+    switch (action) {
+      case 'pin':
+        onTogglePin?.call();
+      case 'archive':
+        onArchive?.call();
+      case 'move':
+        onMove?.call();
+      case 'color':
+        _pickColor(context);
+      case 'delete':
+        onDelete?.call();
+    }
   }
 
   Future<bool> _confirmDelete(BuildContext context) async {
@@ -458,6 +444,90 @@ class _NoteCardState extends State<NoteCard> {
   }
 }
 
+// ─── Images Row ──────────────────────────────────────────────────────────────
+
+class _NoteImagesRow extends StatelessWidget {
+  final List<NoteImage> images;
+  final String noteId;
+
+  const _NoteImagesRow({required this.images, required this.noteId});
+
+  static const double _imageHeight = 64.0;
+  static const double _imageGap = 6.0;
+
+  @override
+  Widget build(BuildContext context) {
+    final radius = BorderRadius.circular(AppRadii.sm);
+    final needsFade = images.length >= 3;
+
+    Widget row = SizedBox(
+      height: _imageHeight,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: images.length,
+        physics: images.length >= 3
+            ? const BouncingScrollPhysics()
+            : const NeverScrollableScrollPhysics(),
+        separatorBuilder: (_, __) => const SizedBox(width: _imageGap),
+        itemBuilder: (context, index) {
+          final img = images[index];
+          return GestureDetector(
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => ImageViewerScreen(
+                    noteId: noteId,
+                    images: List.of(images),
+                    initialIndex: index,
+                  ),
+                ),
+              );
+            },
+            child: ClipRRect(
+              borderRadius: radius,
+              child: Image.network(
+                img.url,
+                width: _imageHeight,
+                height: _imageHeight,
+                fit: BoxFit.cover,
+                errorBuilder: (context, _, __) => Container(
+                  width: _imageHeight,
+                  height: _imageHeight,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.06),
+                    borderRadius: radius,
+                  ),
+                  alignment: Alignment.center,
+                  child: const Icon(
+                    SolarIconsOutline.gallery,
+                    size: 18,
+                    color: AppColors.fgSoft,
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+
+    if (needsFade) {
+      row = ShaderMask(
+        shaderCallback: (bounds) => const LinearGradient(
+          begin: Alignment.centerLeft,
+          end: Alignment.centerRight,
+          colors: [Colors.black, Colors.black, Colors.transparent],
+          stops: [0.0, 0.75, 1.0],
+        ).createShader(bounds),
+        blendMode: BlendMode.dstIn,
+        child: row,
+      );
+    }
+
+    return row;
+  }
+}
+
 // ─── Checklist Progress ───────────────────────────────────────────────────────
 
 class _ChecklistProgress extends StatelessWidget {
@@ -485,7 +555,7 @@ class _ChecklistProgress extends StatelessWidget {
         ),
         const SizedBox(width: AppSpacing.xs),
         Text(
-          '$completed / $total',
+          '$completed/$total',
           style: TextStyle(
             fontSize: 12,
             color: isComplete ? AppColors.success : AppColors.fgSoft,
@@ -527,39 +597,15 @@ class _UpdatedByRow extends StatelessWidget {
     final name = creator['displayName'] ?? creator['username'] ?? '';
     final relativeTime = _formatRelativeTime(updatedAt);
 
-    return Row(
-      children: [
-        Container(
-          width: 18,
-          height: 18,
-          decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.08),
-            shape: BoxShape.circle,
-          ),
-          alignment: Alignment.center,
-          child: Text(
-            name.isNotEmpty ? name[0].toUpperCase() : '?',
-            style: const TextStyle(
-              fontSize: 9,
-              fontWeight: FontWeight.w600,
-              color: AppColors.fgSoft,
-            ),
-          ),
-        ),
-        const SizedBox(width: AppSpacing.xs + 2),
-        Expanded(
-          child: Text(
-            '$name  $relativeTime',
-            style: const TextStyle(
-              fontSize: 11,
-              color: AppColors.fgSoft,
-              fontWeight: FontWeight.w400,
-            ),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-        ),
-      ],
+    return Text(
+      '$name, $relativeTime',
+      style: const TextStyle(
+        fontSize: 11,
+        color: AppColors.fgSoft,
+        fontWeight: FontWeight.w400,
+      ),
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
     );
   }
 
@@ -569,109 +615,10 @@ class _UpdatedByRow extends StatelessWidget {
 
     if (diff.inMinutes < 1) return 'только что';
     if (diff.inMinutes < 60) return '${diff.inMinutes} мин.';
-    if (diff.inHours < 24) return '${diff.inHours} ч.';
-    if (diff.inDays < 7) return '${diff.inDays} дн.';
+    if (diff.inHours < 24) return '${diff.inHours}ч';
+    if (diff.inDays < 7) return '${diff.inDays}дн.';
     final d = dateTime;
     return '${d.day.toString().padLeft(2, '0')}.${d.month.toString().padLeft(2, '0')}.${d.year}';
-  }
-}
-
-// ─── Group Tag ────────────────────────────────────────────────────────────────
-
-class _GroupTag extends StatelessWidget {
-  final String groupTitle;
-
-  const _GroupTag({required this.groupTitle});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.sm,
-        vertical: 3,
-      ),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.06),
-        borderRadius: BorderRadius.circular(AppRadii.xs),
-      ),
-      child: Text(
-        groupTitle,
-        style: const TextStyle(
-          fontSize: 10,
-          fontWeight: FontWeight.w500,
-          color: AppColors.fgSoft,
-          letterSpacing: 0.3,
-        ),
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-      ),
-    );
-  }
-}
-
-// ─── Image Preview ────────────────────────────────────────────────────────────
-
-class _NoteImagePreview extends StatelessWidget {
-  final List<NoteImage> images;
-
-  const _NoteImagePreview({required this.images});
-
-  @override
-  Widget build(BuildContext context) {
-    const size = 48.0;
-    final radius = BorderRadius.circular(AppRadii.sm);
-    final first = images.first;
-
-    return Stack(
-      children: [
-        ClipRRect(
-          borderRadius: radius,
-          child: Image.network(
-            first.url,
-            width: size,
-            height: size,
-            fit: BoxFit.cover,
-            errorBuilder: (context, _, __) => Container(
-              width: size,
-              height: size,
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.06),
-                borderRadius: radius,
-              ),
-              alignment: Alignment.center,
-              child: const Icon(
-                SolarIconsOutline.gallery,
-                size: 18,
-                color: AppColors.fgSoft,
-              ),
-            ),
-          ),
-        ),
-        if (images.length > 1)
-          Positioned(
-            right: 3,
-            bottom: 3,
-            child: Container(
-              padding: const EdgeInsets.symmetric(
-                horizontal: 5,
-                vertical: 2,
-              ),
-              decoration: BoxDecoration(
-                color: Colors.black.withValues(alpha: 0.6),
-                borderRadius: BorderRadius.circular(4),
-              ),
-              child: Text(
-                '+${images.length - 1}',
-                style: const TextStyle(
-                  fontSize: 9,
-                  fontWeight: FontWeight.w600,
-                  color: AppColors.white,
-                ),
-              ),
-            ),
-          ),
-      ],
-    );
   }
 }
 

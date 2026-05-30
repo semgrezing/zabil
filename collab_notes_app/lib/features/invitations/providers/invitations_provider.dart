@@ -4,6 +4,7 @@ import '../models/invitation_model.dart';
 import '../models/invitation_action_result.dart';
 import '../services/invitations_service.dart';
 import '../../../features/groups/providers/groups_provider.dart';
+import '../../../features/auth/providers/auth_provider.dart';
 
 final invitationsServiceProvider =
     Provider<InvitationsService>((ref) => InvitationsService());
@@ -18,6 +19,8 @@ class InvitationsNotifier extends AsyncNotifier<List<InvitationModel>> {
 
   @override
   Future<List<InvitationModel>> build() async {
+    final auth = ref.watch(authStateProvider);
+    if (auth.valueOrNull?.isLoggedIn != true) return [];
     return _service.getIncoming();
   }
 

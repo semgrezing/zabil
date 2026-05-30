@@ -9,6 +9,7 @@ import '../models/note_model.dart';
 import '../widgets/note_card.dart';
 import '../../../shared/widgets/app_loader.dart';
 import '../../../shared/theme/app_colors.dart';
+import '../../../shared/theme/app_dimensions.dart';
 import '../../../features/groups/providers/groups_provider.dart';
 import '../../../shared/widgets/app_chip.dart';
 
@@ -89,11 +90,32 @@ class _NotesListScreenState extends ConsumerState<NotesListScreen> {
             ? TextField(
                 controller: _searchCtrl,
                 autofocus: true,
-                decoration: const InputDecoration(
+                style: const TextStyle(color: AppColors.white, fontSize: 16),
+                decoration: InputDecoration(
                   hintText: 'Поиск заметок...',
-                  border: InputBorder.none,
-                  enabledBorder: InputBorder.none,
-                  focusedBorder: InputBorder.none,
+                  hintStyle: TextStyle(
+                    color: AppColors.fgSoft.withValues(alpha: 0.6),
+                  ),
+                  filled: true,
+                  fillColor: AppColors.surfaceGlass,
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 10,
+                  ),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(AppRadii.sm),
+                    borderSide: BorderSide.none,
+                  ),
+                  suffixIcon: IconButton(
+                    icon: const Icon(SolarIconsOutline.closeCircle, size: 20),
+                    onPressed: () {
+                      setState(() => _showSearch = false);
+                      _searchCtrl.clear();
+                      ref.read(notesFilterProvider.notifier).update(
+                            (s) => s.copyWith(search: ''),
+                          );
+                    },
+                  ),
                 ),
                 onChanged: (value) {
                   ref.read(notesFilterProvider.notifier).update(
@@ -102,111 +124,117 @@ class _NotesListScreenState extends ConsumerState<NotesListScreen> {
                 },
               )
             : const Text('Заметки'),
-        actions: [
-          IconButton(
-            icon: Icon(
-              filter.personal
-                  ? SolarIconsBold.user
-                  : SolarIconsOutline.user,
-            ),
-            tooltip: 'Личное',
-            onPressed: () {
-              ref.read(notesFilterProvider.notifier).update(
-                    (s) => s.copyWith(
-                      personal: true,
-                      groupId: null,
-                    ),
-                  );
-            },
-          ),
-          IconButton(
-            icon: Icon(
-              _showSearch
-                  ? SolarIconsOutline.closeCircle
-                  : SolarIconsOutline.magnifier,
-            ),
-            tooltip: 'Поиск',
-            onPressed: () {
-              setState(() {
-                _showSearch = !_showSearch;
-              });
-              if (!_showSearch) {
-                _searchCtrl.clear();
-                ref.read(notesFilterProvider.notifier).update(
-                      (s) => s.copyWith(search: ''),
-                    );
-              }
-            },
-          ),
-          IconButton(
-            icon: Icon(
-              _gridView
-                  ? SolarIconsOutline.listDown
-                  : SolarIconsOutline.widget,
-            ),
-            tooltip: _gridView ? 'Построчно' : 'Сетка',
-            onPressed: _toggleLayout,
-          ),
-          IconButton(
-            icon: Icon(
-              filter.showArchived ? SolarIconsBold.archive : SolarIconsOutline.archive,
-            ),
-            tooltip: filter.showArchived ? 'Скрыть архив' : 'Показать архив',
-            onPressed: () {
-              ref.read(notesFilterProvider.notifier).update(
-                    (s) => s.copyWith(showArchived: !s.showArchived),
-                  );
-            },
-          ),
-        ],
+        actions: _showSearch
+            ? []
+            : [
+                IconButton(
+                  icon: const Icon(SolarIconsOutline.magnifier),
+                  tooltip: 'Поиск',
+                  onPressed: () {
+                    setState(() => _showSearch = true);
+                  },
+                ),
+                IconButton(
+                  icon: Icon(
+                    filter.showArchived
+                        ? SolarIconsBold.archive
+                        : SolarIconsOutline.archive,
+                  ),
+                  tooltip: filter.showArchived
+                      ? 'Скрыть архив'
+                      : 'Показать архив',
+                  onPressed: () {
+                    ref.read(notesFilterProvider.notifier).update(
+                          (s) => s.copyWith(showArchived: !s.showArchived),
+                        );
+                  },
+                ),
+              ],
       ),
       body: Column(
         children: [
-          // Context chips: all / personal / groups
-          SizedBox(
-            height: 52,
-            child: ListView(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          // Filter chips + view toggle
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+            child: Row(
               children: [
-                Padding(
-                  padding: const EdgeInsets.only(right: 8),
-                  child: AppChip(
-                    label: 'Все',
-                    selected: filter.groupId == null && !filter.personal,
-                    onPressed: () => ref
-                        .read(notesFilterProvider.notifier)
-                        .update((s) => NotesFilter(
-                              search: s.search,
-                              showArchived: s.showArchived,
-                            )),
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.only(right: 8),
-                  child: AppChip(
-                    label: 'Личное',
-                    selected: filter.personal,
-                    onPressed: () => ref.read(notesFilterProvider.notifier).update(
-                          (s) => s.copyWith(personal: true, groupId: null),
-                        ),
-                  ),
-                ),
-                ...groups.map(
-                  (g) => Padding(
-                    padding: const EdgeInsets.only(right: 8),
-                    child: AppChip(
-                      label: g.title,
-                      selected: filter.groupId == g.id && !filter.personal,
-                      onPressed: () => ref.read(notesFilterProvider.notifier).update(
-                            (s) => s.copyWith(groupId: g.id, personal: false),
+                // Filter chips (scrollable with fade)
+                Expanded(
+                  child: SizedBox(
+                    height: 36,
+                    child: ShaderMask(
+                      shaderCallback: (bounds) => const LinearGradient(
+                        begin: Alignment.centerLeft,
+                        end: Alignment.centerRight,
+                        colors: [
+                          Colors.black,
+                          Colors.black,
+                          Colors.transparent,
+                        ],
+                        stops: [0.0, 0.85, 1.0],
+                      ).createShader(bounds),
+                      blendMode: BlendMode.dstIn,
+                      child: ListView(
+                        scrollDirection: Axis.horizontal,
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.only(right: 8),
+                            child: AppChip(
+                              label: 'Все',
+                              selected:
+                                  filter.groupId == null && !filter.personal,
+                              onPressed: () => ref
+                                  .read(notesFilterProvider.notifier)
+                                  .update((s) => NotesFilter(
+                                        search: s.search,
+                                        showArchived: s.showArchived,
+                                      )),
+                            ),
                           ),
+                          Padding(
+                            padding: const EdgeInsets.only(right: 8),
+                            child: AppChip(
+                              label: 'Личное',
+                              selected: filter.personal,
+                              onPressed: () => ref
+                                  .read(notesFilterProvider.notifier)
+                                  .update(
+                                    (s) => s.copyWith(
+                                        personal: true, groupId: null),
+                                  ),
+                            ),
+                          ),
+                          ...groups.map(
+                            (g) => Padding(
+                              padding: const EdgeInsets.only(right: 8),
+                              child: AppChip(
+                                label: g.title,
+                                selected: filter.groupId == g.id &&
+                                    !filter.personal,
+                                onPressed: () => ref
+                                    .read(notesFilterProvider.notifier)
+                                    .update(
+                                      (s) => s.copyWith(
+                                          groupId: g.id, personal: false),
+                                    ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
+                ),
+                const SizedBox(width: 8),
+                // View toggle (static, right side)
+                _ViewToggle(
+                  isGrid: _gridView,
+                  onToggle: _toggleLayout,
                 ),
               ],
             ),
           ),
+          const SizedBox(height: 8),
 
           // Notes list
           Expanded(
@@ -246,43 +274,12 @@ class _NotesListScreenState extends ConsumerState<NotesListScreen> {
                   return NoteCard(
                     note: note,
                     onTap: () => context.go('/notes/${note.id}'),
-                    onArchive: () async {
-                      try {
-                        final archived = await ref
-                            .read(notesProvider.notifier)
-                            .archiveNote(note.id);
-                        if (!context.mounted) return;
-                        final messenger = ScaffoldMessenger.of(context);
-                        messenger.clearSnackBars();
-                        messenger.showSnackBar(
-                          SnackBar(
-                            content: Text(
-                              archived
-                                  ? 'Заметка отправлена в архив'
-                                  : 'Заметка восстановлена из архива',
-                            ),
-                          ),
-                        );
-                      } catch (e) {
-                        if (!context.mounted) return;
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('Не удалось архивировать: $e')),
-                        );
-                      }
-                    },
+                    onArchive: () => _archiveNote(context, ref, note),
                     onDelete: () => _confirmDelete(context, ref, note),
                     onMove: () => _moveNote(context, ref, note),
-                    onTogglePin: () async {
-                      try {
-                        await ref.read(notesProvider.notifier).togglePin(note.id);
-                      } catch (e) {
-                        if (!context.mounted) return;
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('Не удалось закрепить: $e')),
-                        );
-                      }
-                    },
-                    onColorChanged: (color) => _setNoteColor(context, ref, note, color),
+                    onTogglePin: () => _togglePin(context, ref, note),
+                    onColorChanged: (color) =>
+                        _setNoteColor(context, ref, note, color),
                   );
                 }
 
@@ -292,7 +289,8 @@ class _NotesListScreenState extends ConsumerState<NotesListScreen> {
                     backgroundColor: AppColors.bg3,
                     displacement: 60,
                     strokeWidth: 2.5,
-                    onRefresh: () => ref.read(notesProvider.notifier).refresh(),
+                    onRefresh: () =>
+                        ref.read(notesProvider.notifier).refresh(),
                     child: LayoutBuilder(
                       builder: (context, constraints) {
                         final crossAxisCount = constraints.maxWidth >= 1200
@@ -301,7 +299,8 @@ class _NotesListScreenState extends ConsumerState<NotesListScreen> {
                                 ? 3
                                 : 2;
                         return MasonryGridView.count(
-                          padding: const EdgeInsets.fromLTRB(12, 12, 12, 80),
+                          padding:
+                              const EdgeInsets.fromLTRB(12, 4, 12, 80),
                           crossAxisCount: crossAxisCount,
                           mainAxisSpacing: 10,
                           crossAxisSpacing: 10,
@@ -311,44 +310,18 @@ class _NotesListScreenState extends ConsumerState<NotesListScreen> {
                             return NoteCard(
                               note: note,
                               compactMode: true,
-                              onTap: () => context.go('/notes/${note.id}'),
-                              onArchive: () async {
-                                try {
-                                  final archived = await ref
-                                      .read(notesProvider.notifier)
-                                      .archiveNote(note.id);
-                                  if (!context.mounted) return;
-                                  final messenger = ScaffoldMessenger.of(context);
-                                  messenger.clearSnackBars();
-                                  messenger.showSnackBar(
-                                    SnackBar(
-                                      content: Text(
-                                        archived
-                                            ? 'Заметка отправлена в архив'
-                                            : 'Заметка восстановлена из архива',
-                                      ),
-                                    ),
-                                  );
-                                } catch (e) {
-                                  if (!context.mounted) return;
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(content: Text('Не удалось архивировать: $e')),
-                                  );
-                                }
-                              },
-                              onDelete: () => _confirmDelete(context, ref, note),
-                              onMove: () => _moveNote(context, ref, note),
-                              onTogglePin: () async {
-                                try {
-                                  await ref.read(notesProvider.notifier).togglePin(note.id);
-                                } catch (e) {
-                                  if (!context.mounted) return;
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(content: Text('Не удалось закрепить: $e')),
-                                  );
-                                }
-                              },
-                              onColorChanged: (color) => _setNoteColor(context, ref, note, color),
+                              onTap: () =>
+                                  context.go('/notes/${note.id}'),
+                              onArchive: () =>
+                                  _archiveNote(context, ref, note),
+                              onDelete: () =>
+                                  _confirmDelete(context, ref, note),
+                              onMove: () =>
+                                  _moveNote(context, ref, note),
+                              onTogglePin: () =>
+                                  _togglePin(context, ref, note),
+                              onColorChanged: (color) =>
+                                  _setNoteColor(context, ref, note, color),
                             );
                           },
                         );
@@ -358,12 +331,15 @@ class _NotesListScreenState extends ConsumerState<NotesListScreen> {
                 }
 
                 return RefreshIndicator(
-                  onRefresh: () => ref.read(notesProvider.notifier).refresh(),
+                  onRefresh: () =>
+                      ref.read(notesProvider.notifier).refresh(),
                   child: ListView.separated(
-                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 80),
+                    padding: const EdgeInsets.fromLTRB(12, 4, 12, 80),
                     itemCount: notes.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 10),
-                    itemBuilder: (context, index) => contentBuilder(index),
+                    separatorBuilder: (_, __) =>
+                        const SizedBox(height: 10),
+                    itemBuilder: (context, index) =>
+                        contentBuilder(index),
                   ),
                 );
               },
@@ -371,24 +347,67 @@ class _NotesListScreenState extends ConsumerState<NotesListScreen> {
           ),
         ],
       ),
-      floatingActionButton: Padding(
-        padding: const EdgeInsets.only(bottom: 72),
-        child: _CreateNoteFab(),
-      ),
+      floatingActionButton: filter.showArchived
+          ? null
+          : Padding(
+              padding: const EdgeInsets.only(bottom: 72),
+              child: _CreateNoteFab(),
+            ),
     );
   }
 
-  Future<void> _confirmDelete(BuildContext context, WidgetRef ref, NoteModel note) async {
+  Future<void> _archiveNote(
+      BuildContext context, WidgetRef ref, NoteModel note) async {
+    try {
+      final archived =
+          await ref.read(notesProvider.notifier).archiveNote(note.id);
+      if (!context.mounted) return;
+      final messenger = ScaffoldMessenger.of(context);
+      messenger.clearSnackBars();
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            archived
+                ? 'Заметка отправлена в архив'
+                : 'Заметка восстановлена из архива',
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Не удалось архивировать: $e')),
+      );
+    }
+  }
+
+  Future<void> _togglePin(
+      BuildContext context, WidgetRef ref, NoteModel note) async {
+    try {
+      await ref.read(notesProvider.notifier).togglePin(note.id);
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Не удалось закрепить: $e')),
+      );
+    }
+  }
+
+  Future<void> _confirmDelete(
+      BuildContext context, WidgetRef ref, NoteModel note) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Удалить заметку?'),
         content: Text('«${note.title}» будет удалена.'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Отмена')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Отмена')),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            style: TextButton.styleFrom(foregroundColor: Theme.of(ctx).colorScheme.error),
+            style: TextButton.styleFrom(
+                foregroundColor: Theme.of(ctx).colorScheme.error),
             child: const Text('Удалить'),
           ),
         ],
@@ -399,7 +418,8 @@ class _NotesListScreenState extends ConsumerState<NotesListScreen> {
     }
   }
 
-  Future<void> _moveNote(BuildContext context, WidgetRef ref, NoteModel note) async {
+  Future<void> _moveNote(
+      BuildContext context, WidgetRef ref, NoteModel note) async {
     final groups = ref.read(groupsProvider).valueOrNull ?? [];
     final personal = ref.read(personalContextProvider).valueOrNull;
 
@@ -413,7 +433,8 @@ class _NotesListScreenState extends ConsumerState<NotesListScreen> {
 
     if (contexts.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Нет доступных контекстов для переноса')),
+        const SnackBar(
+            content: Text('Нет доступных контекстов для переноса')),
       );
       return;
     }
@@ -478,7 +499,9 @@ class _NotesListScreenState extends ConsumerState<NotesListScreen> {
           ...contexts.map(
             (c) => ListTile(
               leading: Icon(
-                c.personal ? SolarIconsOutline.user : SolarIconsOutline.usersGroupRounded,
+                c.personal
+                    ? SolarIconsOutline.user
+                    : SolarIconsOutline.usersGroupRounded,
               ),
               title: Text(c.title),
               onTap: () => Navigator.pop(ctx, c),
@@ -491,6 +514,43 @@ class _NotesListScreenState extends ConsumerState<NotesListScreen> {
   }
 }
 
+// ─── View Toggle ──────────────────────────────────────────────────────────────
+
+class _ViewToggle extends StatelessWidget {
+  final bool isGrid;
+  final VoidCallback onToggle;
+
+  const _ViewToggle({required this.isGrid, required this.onToggle});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        GestureDetector(
+          onTap: isGrid ? null : onToggle,
+          child: Icon(
+            SolarIconsOutline.widget,
+            size: 20,
+            color: isGrid ? AppColors.white : AppColors.fgSoft,
+          ),
+        ),
+        const SizedBox(width: 12),
+        GestureDetector(
+          onTap: isGrid ? onToggle : null,
+          child: Icon(
+            SolarIconsOutline.listDown,
+            size: 20,
+            color: !isGrid ? AppColors.white : AppColors.fgSoft,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// ─── Create Note FAB ──────────────────────────────────────────────────────────
+
 class _CreateNoteFab extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -498,9 +558,7 @@ class _CreateNoteFab extends ConsumerWidget {
     final groupsAsync = ref.watch(groupsProvider);
     final personalAsync = ref.watch(personalContextProvider);
 
-    return FloatingActionButton.extended(
-      icon: const Icon(SolarIconsBold.addCircle),
-      label: const Text('Заметка'),
+    return FloatingActionButton(
       onPressed: () async {
         if (filter.personal) {
           context.go('/notes/new?personal=true');
@@ -512,7 +570,6 @@ class _CreateNoteFab extends ConsumerWidget {
           return;
         }
 
-        // Если провайдеры ещё загружаются — подождём
         if (groupsAsync.isLoading || personalAsync.isLoading) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -527,11 +584,11 @@ class _CreateNoteFab extends ConsumerWidget {
         final personal = personalAsync.valueOrNull;
 
         if (groups.isEmpty && personal == null) {
-          // Принудительно обновим провайдеры
           ref.invalidate(groupsProvider);
           ref.invalidate(personalContextProvider);
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Контексты недоступны. Обновляю...')),
+            const SnackBar(
+                content: Text('Контексты недоступны. Обновляю...')),
           );
           return;
         }
@@ -559,6 +616,7 @@ class _CreateNoteFab extends ConsumerWidget {
           }
         }
       },
+      child: const Icon(SolarIconsBold.addCircle),
     );
   }
 
@@ -582,7 +640,9 @@ class _CreateNoteFab extends ConsumerWidget {
           ...contexts.map(
             (c) => ListTile(
               leading: Icon(
-                c.personal ? SolarIconsOutline.user : SolarIconsOutline.usersGroupRounded,
+                c.personal
+                    ? SolarIconsOutline.user
+                    : SolarIconsOutline.usersGroupRounded,
               ),
               title: Text(c.title),
               onTap: () => Navigator.pop(ctx, c),

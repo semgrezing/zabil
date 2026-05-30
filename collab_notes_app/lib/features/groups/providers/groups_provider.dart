@@ -1,10 +1,15 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/group_model.dart';
 import '../services/groups_service.dart';
+import '../../auth/providers/auth_provider.dart';
 
 final groupsServiceProvider = Provider<GroupsService>((ref) => GroupsService());
 
 final personalContextProvider = FutureProvider<PersonalContextModel>((ref) {
+  final auth = ref.watch(authStateProvider);
+  if (auth.valueOrNull?.isLoggedIn != true) {
+    throw StateError('Not authenticated');
+  }
   return ref.read(groupsServiceProvider).getPersonalContext();
 });
 
@@ -16,6 +21,8 @@ class GroupsNotifier extends AsyncNotifier<List<GroupModel>> {
 
   @override
   Future<List<GroupModel>> build() async {
+    final auth = ref.watch(authStateProvider);
+    if (auth.valueOrNull?.isLoggedIn != true) return [];
     return _service.getGroups();
   }
 

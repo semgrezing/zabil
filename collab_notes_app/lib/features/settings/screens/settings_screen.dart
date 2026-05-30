@@ -15,6 +15,7 @@ import '../../../features/invitations/providers/invitations_provider.dart';
 import '../../../features/updates/services/update_service.dart';
 import '../../../core/config/app_config.dart';
 import '../../../shared/theme/app_dimensions.dart';
+import '../../../shared/theme/app_colors.dart';
 import '../../../shared/widgets/avatar_history_viewer.dart';
 
 class SettingsScreen extends ConsumerWidget {
@@ -26,9 +27,22 @@ class SettingsScreen extends ConsumerWidget {
     final authState = ref.watch(authStateProvider);
     final user = authState.valueOrNull?.user;
     final theme = Theme.of(context);
+    final currentMode = themeModeAsync.valueOrNull ?? ThemeMode.system;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Настройки')),
+      appBar: AppBar(
+        title: const Text('Настройки'),
+        actions: [
+          IconButton(
+            icon: Icon(_themeIcon(currentMode)),
+            tooltip: _themeLabel(currentMode),
+            onPressed: () {
+              final next = _nextThemeMode(currentMode);
+              ref.read(themeModeProvider.notifier).setTheme(next);
+            },
+          ),
+        ],
+      ),
       body: ListView(
         children: [
           // User section
@@ -56,53 +70,26 @@ class SettingsScreen extends ConsumerWidget {
             const Divider(),
           ],
 
-          // Theme section
-          const _SectionHeader(label: 'Тема'),
-          themeModeAsync.whenOrNull(
-                data: (mode) => Column(
-                  children: [
-                    _ThemeOption(
-                      label: 'Системная',
-                      value: ThemeMode.system,
-                      current: mode,
-                      onChanged: (m) =>
-                          ref.read(themeModeProvider.notifier).setTheme(m),
-                    ),
-                    _ThemeOption(
-                      label: 'Светлая',
-                      value: ThemeMode.light,
-                      current: mode,
-                      onChanged: (m) =>
-                          ref.read(themeModeProvider.notifier).setTheme(m),
-                    ),
-                    _ThemeOption(
-                      label: 'Тёмная',
-                      value: ThemeMode.dark,
-                      current: mode,
-                      onChanged: (m) =>
-                          ref.read(themeModeProvider.notifier).setTheme(m),
-                    ),
-                  ],
-                ),
-              ) ??
-              const SizedBox.shrink(),
-
-          const Divider(),
-
           // Invitations & User search
           const _SectionHeader(label: 'Социальное'),
           _InvitationsTile(),
           ListTile(
             leading: const Icon(SolarIconsOutline.magnifier),
             title: const Text('Найти пользователя'),
-            subtitle: const Text('Поиск и приглашение в группу'),
+            subtitle: const Text(
+              'Поиск и приглашение в группу',
+              style: TextStyle(color: AppColors.fgSoft),
+            ),
             trailing: const Icon(SolarIconsOutline.altArrowRight, size: 16),
             onTap: () => context.push('/search'),
           ),
           ListTile(
             leading: const Icon(SolarIconsOutline.clockCircle),
             title: const Text('Активность'),
-            subtitle: const Text('Последние действия в группах'),
+            subtitle: const Text(
+              'Последние действия в группах',
+              style: TextStyle(color: AppColors.fgSoft),
+            ),
             trailing: const Icon(SolarIconsOutline.altArrowRight, size: 16),
             onTap: () => context.push('/activity'),
           ),
@@ -111,7 +98,7 @@ class SettingsScreen extends ConsumerWidget {
 
           // Update check
           ListTile(
-            leading: const Icon(SolarIconsOutline.altArrowDown),
+            leading: const Icon(SolarIconsOutline.refresh),
             title: const Text('Проверить обновления'),
             onTap: () => _checkForUpdate(context),
           ),
@@ -133,13 +120,46 @@ class SettingsScreen extends ConsumerWidget {
 
           // Logout
           ListTile(
-            leading: Icon(SolarIconsBold.logout, color: theme.colorScheme.error),
+            leading: Icon(SolarIconsOutline.logout, color: theme.colorScheme.error),
             title: Text('Выйти', style: TextStyle(color: theme.colorScheme.error)),
             onTap: () => _confirmLogout(context, ref),
           ),
         ],
       ),
     );
+  }
+
+  IconData _themeIcon(ThemeMode mode) {
+    switch (mode) {
+      case ThemeMode.light:
+        return SolarIconsOutline.sun;
+      case ThemeMode.dark:
+        return SolarIconsOutline.moon;
+      case ThemeMode.system:
+        return SolarIconsOutline.monitor;
+    }
+  }
+
+  String _themeLabel(ThemeMode mode) {
+    switch (mode) {
+      case ThemeMode.light:
+        return 'Светлая тема';
+      case ThemeMode.dark:
+        return 'Тёмная тема';
+      case ThemeMode.system:
+        return 'Системная тема';
+    }
+  }
+
+  ThemeMode _nextThemeMode(ThemeMode current) {
+    switch (current) {
+      case ThemeMode.system:
+        return ThemeMode.light;
+      case ThemeMode.light:
+        return ThemeMode.dark;
+      case ThemeMode.dark:
+        return ThemeMode.system;
+    }
   }
 
   Future<void> _checkForUpdate(BuildContext context) async {
@@ -272,24 +292,31 @@ class _EditProfileSheetState extends ConsumerState<_EditProfileSheet> {
     final picked = await picker.pickImage(source: ImageSource.gallery);
     if (picked == null) return;
 
-    final cropped = await ImageCropper().cropImage(
-      sourcePath: picked.path,
-      aspectRatio: const CropAspectRatio(ratioX: 1, ratioY: 1),
-      compressQuality: 100,
-      uiSettings: [
-        AndroidUiSettings(
-          toolbarTitle: 'Кадрирование аватарки',
-          cropStyle: CropStyle.circle,
-        ),
-        IOSUiSettings(
-          title: 'Кадрирование аватарки',
-          cropStyle: CropStyle.circle,
-        ),
-      ],
-    );
+    try {
+      final cropped = await ImageCropper().cropImage(
+        sourcePath: picked.path,
+        aspectRatio: const CropAspectRatio(ratioX: 1, ratioY: 1),
+        compressQuality: 100,
+        uiSettings: [
+          AndroidUiSettings(
+            toolbarTitle: 'Кадрирование аватарки',
+            cropStyle: CropStyle.circle,
+          ),
+          IOSUiSettings(
+            title: 'Кадрирование аватарки',
+            cropStyle: CropStyle.circle,
+          ),
+        ],
+      );
 
-    if (cropped != null) {
-      setState(() => _avatarPath = cropped.path);
+      if (cropped != null && mounted) {
+        setState(() => _avatarPath = cropped.path);
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Не удалось обработать изображение: $e')),
+      );
     }
   }
 
@@ -490,7 +517,10 @@ class _InvitationsTile extends ConsumerWidget {
     return ListTile(
       leading: const Icon(SolarIconsOutline.letter),
       title: const Text('Приглашения'),
-      subtitle: Text(count > 0 ? '$count новых' : 'Нет новых приглашений'),
+      subtitle: Text(
+        count > 0 ? '$count новых' : 'Нет новых приглашений',
+        style: const TextStyle(color: AppColors.fgSoft),
+      ),
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -515,33 +545,6 @@ class _InvitationsTile extends ConsumerWidget {
         ],
       ),
       onTap: () => context.push('/invitations'),
-    );
-  }
-}
-
-class _ThemeOption extends StatelessWidget {
-  final String label;
-  final ThemeMode value;
-  final ThemeMode current;
-  final ValueChanged<ThemeMode> onChanged;
-
-  const _ThemeOption({
-    required this.label,
-    required this.value,
-    required this.current,
-    required this.onChanged,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return RadioListTile<ThemeMode>(
-      title: Text(label),
-      value: value,
-      // ignore: deprecated_member_use — RadioGroup появится в более новом Flutter
-      groupValue: current,
-      // ignore: deprecated_member_use
-      onChanged: (v) => v != null ? onChanged(v) : null,
-      dense: true,
     );
   }
 }
