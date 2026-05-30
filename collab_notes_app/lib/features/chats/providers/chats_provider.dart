@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/realtime/ws_client.dart';
+import '../../auth/providers/auth_provider.dart';
 import '../models/chat_message.dart';
 import '../services/chats_service.dart';
 
@@ -27,6 +28,8 @@ class PersonalConversationsNotifier
       if (event is PersonalMessageEvent) {
         // Простейшая стратегия — рефетч списка. Дёшево и без багов с
         // непрочитанностью.
+        refresh();
+      } else if (event is PersonalReadReceiptEvent) {
         refresh();
       }
     });
@@ -120,6 +123,7 @@ class PersonalChatNotifier
     extends FamilyAsyncNotifier<List<PersonalChatMessage>, String> {
   ChatsService get _service => ref.read(chatsServiceProvider);
   StreamSubscription? _wsSub;
+  Timer? _markReadDebounce;
 
   @override
   Future<List<PersonalChatMessage>> build(String otherUserId) async {
@@ -137,10 +141,27 @@ class PersonalChatNotifier
             if (list.any((m) => m.id == message.id)) return list;
             return [message, ...list];
           });
+
+          final myUserId = ref.read(authStateProvider).valueOrNull?.user?.id;
+          if (sender == arg && receiver == myUserId) {
+            _scheduleMarkRead();
+          }
         } catch (_) {}
+      } else if (event is PersonalReadReceiptEvent) {
+        if (event.peerUserId != arg) return;
+        if (event.messageIds.isEmpty) return;
+        final ids = event.messageIds.toSet();
+        state = state.whenData((list) => list
+            .map((m) => ids.contains(m.id)
+                ? m.copyWith(readAt: event.readAt)
+                : m)
+            .toList());
       }
     });
-    ref.onDispose(() => _wsSub?.cancel());
+    ref.onDispose(() {
+      _wsSub?.cancel();
+      _markReadDebounce?.cancel();
+    });
     return _service.getPersonalMessages(otherUserId);
   }
 
@@ -169,6 +190,21 @@ class PersonalChatNotifier
   Future<void> markRead() async {
     try {
       await _service.markPersonalRead(arg);
+      final myUserId = ref.read(authStateProvider).valueOrNull?.user?.id;
+      final now = DateTime.now();
+      state = state.whenData((list) => list
+          .map((m) => (m.senderId == arg && m.receiverId == myUserId && m.readAt == null)
+              ? m.copyWith(readAt: now)
+              : m)
+          .toList());
+      ref.invalidate(personalConversationsProvider);
     } catch (_) {}
+  }
+
+  void _scheduleMarkRead() {
+    _markReadDebounce?.cancel();
+    _markReadDebounce = Timer(const Duration(milliseconds: 450), () {
+      markRead();
+    });
   }
 }

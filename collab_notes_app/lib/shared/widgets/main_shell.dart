@@ -1,4 +1,5 @@
 import 'dart:ui';
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -9,14 +10,23 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../features/groups/providers/groups_provider.dart';
 import '../../features/notes/providers/notes_provider.dart';
 import '../../features/updates/providers/update_provider.dart';
+import '../../features/invitations/providers/invitations_provider.dart';
+import '../../core/realtime/ws_client.dart';
 import '../theme/app_colors.dart';
 
 final _updateBannerShownProvider = StateProvider<bool>((ref) => false);
 
-class MainShell extends ConsumerWidget {
+class MainShell extends ConsumerStatefulWidget {
   final Widget child;
 
   const MainShell({super.key, required this.child});
+
+  @override
+  ConsumerState<MainShell> createState() => _MainShellState();
+}
+
+class _MainShellState extends ConsumerState<MainShell> {
+  StreamSubscription? _pushSub;
 
   static const _tabs = [
     _TabItem(icon: SolarIconsOutline.notes, activeIcon: SolarIconsBold.notes, label: 'Заметки', path: '/notes'),
@@ -25,7 +35,59 @@ class MainShell extends ConsumerWidget {
   ];
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  void initState() {
+    super.initState();
+    _pushSub = ref
+        .read(wsClientProvider)
+        .events
+        .where((e) => e is PushNotificationEvent)
+        .cast<PushNotificationEvent>()
+        .listen(_handlePushToast);
+  }
+
+  @override
+  void dispose() {
+    _pushSub?.cancel();
+    super.dispose();
+  }
+
+  void _handlePushToast(PushNotificationEvent event) {
+    if (!mounted) return;
+    final type = event.data['type']?.toString();
+    final messenger = ScaffoldMessenger.of(context);
+
+    switch (type) {
+      case 'invitation':
+        ref.invalidate(invitationsProvider);
+        messenger.showSnackBar(
+          const SnackBar(content: Text('Получено новое приглашение в группу')),
+        );
+        break;
+      case 'invitation_accepted':
+        messenger.showSnackBar(
+          const SnackBar(content: Text('Ваше приглашение принято')),
+        );
+        break;
+      case 'invitation_declined':
+        messenger.showSnackBar(
+          const SnackBar(content: Text('Ваше приглашение отклонено')),
+        );
+        break;
+      case 'group_member_removed':
+      case 'group_deleted':
+        ref.invalidate(groupsProvider);
+        ref.invalidate(notesProvider);
+        messenger.showSnackBar(
+          SnackBar(content: Text(event.body.isNotEmpty ? event.body : 'Обновлен доступ к группе')),
+        );
+        break;
+      default:
+        break;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final updateInfo = ref.watch(updateCheckProvider).valueOrNull;
     final bannerShown = ref.watch(_updateBannerShownProvider);
     if (updateInfo != null &&
@@ -49,16 +111,22 @@ class MainShell extends ConsumerWidget {
       });
     }
 
-    final location = GoRouterState.of(context).matchedLocation;
+    final state = GoRouterState.of(context);
+    final location = state.uri.path;
     final currentIndex = _tabs.indexWhere((t) => location.startsWith(t.path));
     final isNotesRoot = location == '/notes';
+    final isNoteEditorRoute = location == '/notes/new' ||
+        (location.startsWith('/notes/') && location != '/notes');
+    final hideBottomNavbar = isNoteEditorRoute;
     final notesFilter = isNotesRoot ? ref.watch(notesFilterProvider) : null;
     final showFab = isNotesRoot && !(notesFilter?.showArchived ?? false);
 
     return Scaffold(
       extendBody: true,
-      body: child,
-      bottomNavigationBar: Padding(
+      body: widget.child,
+      bottomNavigationBar: hideBottomNavbar
+          ? null
+          : Padding(
         padding: EdgeInsets.only(
           bottom: MediaQuery.of(context).padding.bottom + 8,
         ),

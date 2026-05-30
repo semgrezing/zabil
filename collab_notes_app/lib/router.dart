@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../core/api/api_client.dart';
 import '../features/auth/providers/auth_provider.dart';
 import '../features/auth/screens/login_screen.dart';
 import '../features/auth/screens/register_screen.dart';
@@ -27,9 +28,11 @@ final routerProvider = Provider<GoRouter>((ref) {
       // Don't redirect while auth state is loading (avoids flicker on startup)
       if (authState.isLoading) return null;
       final isLoggedIn = authState.valueOrNull?.isLoggedIn ?? false;
+      final isSessionInvalidated = ApiClient.sessionInvalidated;
       final isAuthRoute = state.matchedLocation == '/login' ||
           state.matchedLocation == '/register';
 
+      if (isSessionInvalidated && !isAuthRoute) return '/login';
       if (!isLoggedIn && !isAuthRoute) return '/login';
       if (isLoggedIn && isAuthRoute) return '/notes';
       return null;
@@ -151,5 +154,16 @@ final routerProvider = Provider<GoRouter>((ref) {
 class _AuthNotifier extends ChangeNotifier {
   _AuthNotifier(Ref ref) {
     ref.listen(authStateProvider, (_, __) => notifyListeners());
+    ApiClient.sessionEpoch.addListener(_onSessionEpochChanged);
+  }
+
+  void _onSessionEpochChanged() {
+    notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    ApiClient.sessionEpoch.removeListener(_onSessionEpochChanged);
+    super.dispose();
   }
 }

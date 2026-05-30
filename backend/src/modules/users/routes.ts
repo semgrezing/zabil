@@ -3,6 +3,7 @@ import { authenticate } from '../../middleware/auth.js'
 import { updateProfileSchema } from './schema.js'
 import {
   getMe,
+  getUserPublicProfile,
   updateProfile,
   uploadAvatar,
   getAvatarHistory,
@@ -114,5 +115,17 @@ export async function usersRoutes(app: FastifyInstance) {
     }
 
     return reply.send({ user })
+  })
+
+  // GET /users/:id/profile
+  app.get('/:id/profile', { preHandler: [authenticate] }, async (request, reply) => {
+    const { id } = request.params as { id: string }
+    try {
+      const profile = await getUserPublicProfile(app, request.user.userId, id)
+      return reply.send(profile)
+    } catch (err) {
+      if (err instanceof AppError) return reply.status(err.statusCode).send({ error: err.message, code: err.code })
+      throw err
+    }
   })
 }

@@ -8,7 +8,6 @@ import 'package:solar_icons/solar_icons.dart';
 import '../providers/notes_provider.dart';
 import '../models/note_model.dart';
 import '../widgets/note_card.dart';
-import '../../../shared/widgets/app_loader.dart';
 import '../../../shared/theme/app_colors.dart';
 import '../../../shared/theme/app_dimensions.dart';
 import '../../../features/groups/providers/groups_provider.dart';
@@ -25,11 +24,13 @@ class _NotesListScreenState extends ConsumerState<NotesListScreen> {
   final _searchCtrl = TextEditingController();
   final _searchFocus = FocusNode();
   static const _layoutPrefKey = 'notes.layout.grid';
+  static const _archiveHintPrefKey = 'notes.archive.hint.shown';
 
   String? _routeGroupId;
   bool _routePersonal = false;
   bool _showSearch = false;
   bool _gridView = false;
+  bool _archiveHintShown = false;
 
   @override
   void initState() {
@@ -84,7 +85,33 @@ class _NotesListScreenState extends ConsumerState<NotesListScreen> {
     if (!mounted) return;
     setState(() {
       _gridView = prefs.getBool(_layoutPrefKey) ?? false;
+      _archiveHintShown = prefs.getBool(_archiveHintPrefKey) ?? false;
     });
+  }
+
+  Future<void> _maybeShowArchiveHint() async {
+    if (_archiveHintShown || !mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.clearSnackBars();
+    messenger.showSnackBar(
+      SnackBar(
+        content: const Text('Вы в архиве'),
+        duration: const Duration(seconds: 4),
+        action: SnackBarAction(
+          label: 'Выйти',
+          onPressed: () {
+            ref.read(notesFilterProvider.notifier).update(
+                  (s) => s.copyWith(showArchived: false),
+                );
+          },
+        ),
+      ),
+    );
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_archiveHintPrefKey, true);
+    if (!mounted) return;
+    setState(() => _archiveHintShown = true);
   }
 
   Future<void> _toggleLayout() async {
@@ -97,6 +124,9 @@ class _NotesListScreenState extends ConsumerState<NotesListScreen> {
   @override
   Widget build(BuildContext context) {
     final filter = ref.watch(notesFilterProvider);
+    final realtimeBanner = ref.watch(notesRealtimeBannerProvider);
+    final textHighlights = ref.watch(notesTextHighlightProvider);
+    final checklistHighlights = ref.watch(notesChecklistHighlightProvider);
     final notesAsync = ref.watch(notesProvider);
     final groupsAsync = ref.watch(groupsProvider);
     final groups = groupsAsync.valueOrNull ?? [];
@@ -152,21 +182,27 @@ class _NotesListScreenState extends ConsumerState<NotesListScreen> {
                     setState(() => _showSearch = true);
                   },
                 ),
-                IconButton(
-                  icon: Icon(
-                    filter.showArchived
-                        ? SolarIconsBold.archive
-                        : SolarIconsOutline.archive,
+                if (filter.showArchived)
+                  TextButton.icon(
+                    icon: const Icon(SolarIconsOutline.archiveUp, size: 18),
+                    label: const Text('Выйти из архива'),
+                    onPressed: () {
+                      ref.read(notesFilterProvider.notifier).update(
+                            (s) => s.copyWith(showArchived: false),
+                          );
+                    },
                   ),
-                  tooltip: filter.showArchived
-                      ? 'Скрыть архив'
-                      : 'Показать архив',
-                  onPressed: () {
-                    ref.read(notesFilterProvider.notifier).update(
-                          (s) => s.copyWith(showArchived: !s.showArchived),
-                        );
-                  },
-                ),
+                if (!filter.showArchived)
+                  IconButton(
+                    icon: const Icon(SolarIconsOutline.archive),
+                    tooltip: 'Показать архив',
+                    onPressed: () {
+                      ref.read(notesFilterProvider.notifier).update(
+                            (s) => s.copyWith(showArchived: true),
+                          );
+                      _maybeShowArchiveHint();
+                    },
+                  ),
               ],
       ),
       body: Column(
@@ -201,6 +237,7 @@ class _NotesListScreenState extends ConsumerState<NotesListScreen> {
                               label: 'Все',
                               selected:
                                   filter.groupId == null && !filter.personal,
+                                inactiveBackgroundColor: const Color(0xFF1A1A1A),
                               onPressed: () => ref
                                   .read(notesFilterProvider.notifier)
                                   .update((s) => NotesFilter(
@@ -214,6 +251,7 @@ class _NotesListScreenState extends ConsumerState<NotesListScreen> {
                             child: AppChip(
                               label: 'Личное',
                               selected: filter.personal,
+                                inactiveBackgroundColor: const Color(0xFF1A1A1A),
                               onPressed: () => ref
                                   .read(notesFilterProvider.notifier)
                                   .update(
@@ -229,6 +267,7 @@ class _NotesListScreenState extends ConsumerState<NotesListScreen> {
                                 label: g.title,
                                 selected: filter.groupId == g.id &&
                                     !filter.personal,
+                                inactiveBackgroundColor: const Color(0xFF1A1A1A),
                                 onPressed: () => ref
                                     .read(notesFilterProvider.notifier)
                                     .update(
@@ -254,10 +293,44 @@ class _NotesListScreenState extends ConsumerState<NotesListScreen> {
           ),
           const SizedBox(height: 8),
 
+          if (realtimeBanner)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                decoration: BoxDecoration(
+                  color: AppColors.bg3,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(SolarIconsOutline.bell, size: 16, color: AppColors.fgSoft),
+                    const SizedBox(width: 8),
+                    const Expanded(
+                      child: Text(
+                        'Есть новые изменения в заметках',
+                        style: TextStyle(fontSize: 13, color: AppColors.fgSoft),
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: () => ref.read(notesProvider.notifier).refresh(),
+                      child: const Text('Обновить'),
+                    ),
+                    TextButton(
+                      onPressed: () =>
+                          ref.read(notesRealtimeBannerProvider.notifier).state = false,
+                      child: const Text('Позже'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
           // Notes list
           Expanded(
             child: notesAsync.when(
-              loading: () => const AppLoader(),
+              loading: () => const _NotesListSkeleton(),
               error: (err, _) => Center(
                 child: Text('Ошибка загрузки: $err'),
               ),
@@ -291,7 +364,12 @@ class _NotesListScreenState extends ConsumerState<NotesListScreen> {
                   final note = notes[index];
                   return NoteCard(
                     note: note,
-                    onTap: () => context.go('/notes/${note.id}'),
+                    highlightText: textHighlights.contains(note.id),
+                    highlightChecklist: checklistHighlights.contains(note.id),
+                    onTap: () {
+                      ref.read(notesProvider.notifier).markNoteAsViewed(note.id);
+                      context.go('/notes/${note.id}');
+                    },
                     onArchive: () => _archiveNote(context, ref, note),
                     onDelete: () => _confirmDelete(context, ref, note),
                     onMove: () => _moveNote(context, ref, note),
@@ -328,8 +406,12 @@ class _NotesListScreenState extends ConsumerState<NotesListScreen> {
                             return NoteCard(
                               note: note,
                               compactMode: true,
-                              onTap: () =>
-                                  context.go('/notes/${note.id}'),
+                              highlightText: textHighlights.contains(note.id),
+                              highlightChecklist: checklistHighlights.contains(note.id),
+                              onTap: () {
+                                ref.read(notesProvider.notifier).markNoteAsViewed(note.id);
+                                context.go('/notes/${note.id}');
+                              },
                               onArchive: () =>
                                   _archiveNote(context, ref, note),
                               onDelete: () =>
@@ -372,6 +454,47 @@ class _NotesListScreenState extends ConsumerState<NotesListScreen> {
   Future<void> _archiveNote(
       BuildContext context, WidgetRef ref, NoteModel note) async {
     try {
+      _NoteContextTarget? restoreTarget;
+      if (note.archived) {
+        final contexts = _buildContextTargets(
+          ref,
+          note,
+          includeCurrent: true,
+        );
+        if (contexts.isEmpty) {
+          if (!context.mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Нет доступных контекстов для восстановления'),
+            ),
+          );
+          return;
+        }
+
+        restoreTarget = await _pickRestoreTarget(
+          context,
+          contexts,
+          initial: _NoteContextTarget._(
+            id: note.groupId,
+            title: note.isPersonal ? 'Личное' : (note.groupTitle ?? 'Группа'),
+            personal: note.isPersonal,
+          ),
+        );
+        if (restoreTarget == null) {
+          return;
+        }
+
+        final sourceChanged = restoreTarget.id != note.groupId ||
+            restoreTarget.personal != note.isPersonal;
+        if (sourceChanged) {
+          await ref.read(notesProvider.notifier).moveNote(
+                note.id,
+                targetGroupId: restoreTarget.personal ? null : restoreTarget.id,
+                targetPersonal: restoreTarget.personal,
+              );
+        }
+      }
+
       final archived =
           await ref.read(notesProvider.notifier).archiveNote(note.id);
       if (!context.mounted) return;
@@ -382,8 +505,21 @@ class _NotesListScreenState extends ConsumerState<NotesListScreen> {
           content: Text(
             archived
                 ? 'Заметка отправлена в архив'
-                : 'Заметка восстановлена из архива',
+                : restoreTarget == null
+                    ? 'Заметка восстановлена из архива'
+                    : 'Восстановлено: ${restoreTarget.title}',
           ),
+          action: archived
+              ? SnackBarAction(
+                  label: 'Перейти',
+                  onPressed: () {
+                    ref.read(notesFilterProvider.notifier).update(
+                          (s) => s.copyWith(showArchived: true),
+                        );
+                    _maybeShowArchiveHint();
+                  },
+                )
+              : null,
         ),
       );
     } catch (e) {
@@ -433,16 +569,7 @@ class _NotesListScreenState extends ConsumerState<NotesListScreen> {
 
   Future<void> _moveNote(
       BuildContext context, WidgetRef ref, NoteModel note) async {
-    final groups = ref.read(groupsProvider).valueOrNull ?? [];
-    final personal = ref.read(personalContextProvider).valueOrNull;
-
-    final contexts = <_NoteContextTarget>[
-      if (personal != null && !note.isPersonal)
-        _NoteContextTarget.personal(personal.id),
-      ...groups
-          .where((g) => g.id != note.groupId)
-          .map((g) => _NoteContextTarget.group(g.id, g.title)),
-    ];
+    final contexts = _buildContextTargets(ref, note, includeCurrent: false);
 
     if (contexts.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -526,6 +653,109 @@ class _NotesListScreenState extends ConsumerState<NotesListScreen> {
       ),
     );
   }
+
+  List<_NoteContextTarget> _buildContextTargets(
+    WidgetRef ref,
+    NoteModel note, {
+    required bool includeCurrent,
+  }) {
+    final groups = ref.read(groupsProvider).valueOrNull ?? [];
+    final personal = ref.read(personalContextProvider).valueOrNull;
+
+    return <_NoteContextTarget>[
+      if (personal != null && (includeCurrent || !note.isPersonal))
+        _NoteContextTarget.personal(personal.id),
+      ...groups
+          .where((g) => includeCurrent || g.id != note.groupId)
+          .map((g) => _NoteContextTarget.group(g.id, g.title)),
+    ];
+  }
+
+  Future<_NoteContextTarget?> _pickRestoreTarget(
+    BuildContext context,
+    List<_NoteContextTarget> contexts, {
+    required _NoteContextTarget initial,
+  }) {
+    return showModalBottomSheet<_NoteContextTarget>(
+      context: context,
+      showDragHandle: true,
+      useRootNavigator: true,
+      builder: (ctx) {
+        var selectedId = initial.id;
+        var selectedPersonal = initial.personal;
+
+        return StatefulBuilder(
+          builder: (ctx, setModalState) {
+            final selected = contexts.firstWhere(
+              (c) => c.id == selectedId && c.personal == selectedPersonal,
+              orElse: () => contexts.first,
+            );
+
+            return SafeArea(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                    child: Text(
+                      'Восстановить заметку в',
+                      style: Theme.of(ctx).textTheme.titleMedium,
+                    ),
+                  ),
+                  ...contexts.map(
+                    (c) {
+                      final selectedNow =
+                          c.id == selectedId && c.personal == selectedPersonal;
+                      return ListTile(
+                        onTap: () {
+                          setModalState(() {
+                            selectedId = c.id;
+                            selectedPersonal = c.personal;
+                          });
+                        },
+                        leading: Icon(
+                          c.personal
+                              ? SolarIconsOutline.user
+                              : SolarIconsOutline.usersGroupRounded,
+                        ),
+                        title: Text(c.title),
+                        trailing: Icon(
+                          selectedNow
+                              ? SolarIconsBold.checkCircle
+                              : Icons.radio_button_unchecked,
+                          size: 18,
+                        ),
+                      );
+                    },
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: () => Navigator.pop(ctx),
+                            child: const Text('Отмена'),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: FilledButton(
+                            onPressed: () => Navigator.pop(ctx, selected),
+                            child: const Text('Восстановить'),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
 }
 
 // ─── View Toggle ──────────────────────────────────────────────────────────────
@@ -577,4 +807,133 @@ class _NoteContextTarget {
 
   factory _NoteContextTarget.group(String id, String title) =>
       _NoteContextTarget._(id: id, title: title, personal: false);
+}
+
+class _NotesListSkeleton extends StatefulWidget {
+  const _NotesListSkeleton();
+
+  @override
+  State<_NotesListSkeleton> createState() => _NotesListSkeletonState();
+}
+
+class _NotesListSkeletonState extends State<_NotesListSkeleton>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1200),
+  )..repeat();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, _) {
+        final offset = _controller.value;
+
+        return ShaderMask(
+          blendMode: BlendMode.srcATop,
+          shaderCallback: (rect) {
+            return LinearGradient(
+              begin: Alignment(-1.8 + offset * 2.6, -0.2),
+              end: Alignment(-0.8 + offset * 2.6, 0.2),
+              colors: const [
+                Color(0xFF1D1F24),
+                Color(0xFF2B2F37),
+                Color(0xFF1D1F24),
+              ],
+              stops: const [0.15, 0.5, 0.85],
+            ).createShader(rect);
+          },
+          child: ListView.separated(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 80),
+            itemBuilder: (context, index) => _SkeletonNoteCard(index: index),
+            separatorBuilder: (_, __) => const SizedBox(height: 10),
+            itemCount: 7,
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _SkeletonNoteCard extends StatelessWidget {
+  final int index;
+
+  const _SkeletonNoteCard({required this.index});
+
+  @override
+  Widget build(BuildContext context) {
+    final base = Theme.of(context).colorScheme.surfaceContainerHighest;
+    final height = 108.0 + (index % 3) * 18.0;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: base,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      padding: const EdgeInsets.all(14),
+      child: SizedBox(
+        height: height,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: 140,
+              height: 14,
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.2),
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+            const SizedBox(height: 10),
+            Container(
+              width: double.infinity,
+              height: 10,
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.16),
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Container(
+              width: 180,
+              height: 10,
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.16),
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+            const Spacer(),
+            Row(
+              children: [
+                Container(
+                  width: 52,
+                  height: 18,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Container(
+                  width: 72,
+                  height: 18,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.14),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }

@@ -1,7 +1,11 @@
 import { FastifyInstance } from 'fastify'
 import { SendInvitationDto } from './schema.js'
 import { errors } from '../../utils/errors.js'
-import { notifyNewInvitation, notifyInvitationAccepted } from '../notifications/service.js'
+import {
+  notifyNewInvitation,
+  notifyInvitationAccepted,
+  notifyInvitationDeclined,
+} from '../notifications/service.js'
 
 type InvitationActionResult = {
   success: true
@@ -78,6 +82,31 @@ export async function getIncomingInvitations(app: FastifyInstance, userId: strin
     include: {
       group: { select: { id: true, title: true } },
       sender: { select: { id: true, username: true } },
+    },
+    orderBy: { createdAt: 'desc' },
+  })
+}
+
+export async function getGroupPendingInvitations(
+  app: FastifyInstance,
+  userId: string,
+  groupId: string,
+) {
+  const membership = await app.prisma.groupMember.findUnique({
+    where: { groupId_userId: { groupId, userId } },
+    select: { role: true },
+  })
+  if (!membership) throw errors.forbidden()
+  if (membership.role !== 'owner' && membership.role !== 'admin') {
+    throw errors.forbidden()
+  }
+
+  return app.prisma.invitation.findMany({
+    where: { groupId, status: 'pending' },
+    include: {
+      group: { select: { id: true, title: true } },
+      sender: { select: { id: true, username: true, displayName: true } },
+      receiver: { select: { id: true, username: true, displayName: true } },
     },
     orderBy: { createdAt: 'desc' },
   })
@@ -192,6 +221,21 @@ export async function respondToInvitation(
 
     return { success: true, status: targetStatus, alreadyProcessed: false }
   })
+
+  if (result.status === 'declined' && !result.alreadyProcessed) {
+    const detailed = await app.prisma.invitation.findUnique({
+      where: { id: invitationId },
+      include: {
+        group: { select: { id: true, title: true } },
+        receiver: { select: { id: true, username: true } },
+      },
+    })
+    if (detailed) {
+      notifyInvitationDeclined(app, detailed).catch((e: unknown) =>
+        console.error('[notify] notifyInvitationDeclined:', e),
+      )
+    }
+  }
 
   return result
 }

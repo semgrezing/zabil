@@ -267,8 +267,30 @@ export async function markPersonalRead(
   userId: string,
   otherUserId: string,
 ) {
+  const unread = await app.prisma.personalMessage.findMany({
+    where: { senderId: otherUserId, receiverId: userId, readAt: null },
+    select: { id: true },
+  })
+  if (unread.length === 0) return
+
+  const readAt = new Date()
   await app.prisma.personalMessage.updateMany({
     where: { senderId: otherUserId, receiverId: userId, readAt: null },
-    data: { readAt: new Date() },
+    data: { readAt },
   })
+
+  const payload = {
+    type: 'read_receipt',
+    kind: 'personal',
+    data: {
+      readerId: userId,
+      peerUserId: otherUserId,
+      messageIds: unread.map((m) => m.id),
+      readAt: readAt.toISOString(),
+    },
+  }
+
+  // Sender gets explicit read receipts, reader updates own devices too.
+  sendToUser(otherUserId, payload)
+  sendToUser(userId, payload)
 }

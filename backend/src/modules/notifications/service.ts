@@ -18,6 +18,8 @@ import { sendToUser } from '../chats/wsHub.js'
 
 let _adminApp: any | null = null
 let _initAttempted = false
+const _checklistCompletionCooldown = new Map<string, number>()
+const CHECKLIST_COMPLETION_COOLDOWN_MS = 5 * 60 * 1000
 
 /* eslint-disable @typescript-eslint/no-var-requires */
 async function ensureFirebase() {
@@ -164,6 +166,55 @@ export async function notifyInvitationAccepted(
   })
 }
 
+export async function notifyInvitationDeclined(
+  app: FastifyInstance,
+  invitation: { id: string; senderId: string; group: { title: string }; receiver: { username: string } },
+) {
+  await sendPush(app, invitation.senderId, {
+    title: 'Приглашение отклонено',
+    body: `${invitation.receiver.username} отклонил приглашение в «${invitation.group.title}»`,
+    data: { type: 'invitation_declined', invitationId: invitation.id },
+  })
+}
+
+export async function notifyGroupMemberRemoved(
+  app: FastifyInstance,
+  payload: {
+    userId: string
+    groupId: string
+    groupTitle: string
+    actorName: string
+  },
+) {
+  await sendPush(app, payload.userId, {
+    title: 'Доступ к группе изменен',
+    body: `Вы исключены из «${payload.groupTitle}» (${payload.actorName})`,
+    data: {
+      type: 'group_member_removed',
+      groupId: payload.groupId,
+    },
+  })
+}
+
+export async function notifyGroupDeleted(
+  app: FastifyInstance,
+  payload: {
+    userId: string
+    groupId: string
+    groupTitle: string
+    actorName: string
+  },
+) {
+  await sendPush(app, payload.userId, {
+    title: 'Группа удалена',
+    body: `Группа «${payload.groupTitle}» удалена (${payload.actorName})`,
+    data: {
+      type: 'group_deleted',
+      groupId: payload.groupId,
+    },
+  })
+}
+
 export async function notifyNewNote(
   app: FastifyInstance,
   note: { id: string; groupId: string; createdBy: string; title: string },
@@ -195,14 +246,17 @@ export async function notifyNoteUpdated(
   },
   groupTitle: string,
 ) {
+  // Checklist push notifications are globally disabled by product decision.
+  if (payload.reason === 'checklist') {
+    return
+  }
+
   const members = await app.prisma.groupMember.findMany({
     where: { groupId: payload.groupId, userId: { not: payload.updatedBy } },
     select: { userId: true },
   })
 
-  const body = payload.reason === 'checklist'
-    ? `Обновлен чеклист: «${payload.title}»`
-    : `Изменена заметка: «${payload.title}»`
+  const body = `Изменена заметка: «${payload.title}»`
 
   await Promise.all(
     members.map((m) =>
@@ -210,7 +264,7 @@ export async function notifyNoteUpdated(
         title: groupTitle,
         body,
         data: {
-          type: payload.reason === 'checklist' ? 'checklist_updated' : 'note_updated',
+          type: 'note_updated',
           noteId: payload.noteId,
           groupId: payload.groupId,
         },
@@ -261,4 +315,18 @@ export async function notifyNewPersonalMessage(
     body: message.body.slice(0, 120),
     data: { type: 'personal_message', messageId: message.id, senderId: message.senderId },
   })
+}
+
+export async function notifyChecklistCompleted(
+  _app: FastifyInstance,
+  _payload: {
+    noteId: string
+    groupId: string
+    title: string
+    updatedBy: string
+    groupTitle: string
+  },
+) {
+  // Checklist push notifications are globally disabled by product decision.
+  return
 }

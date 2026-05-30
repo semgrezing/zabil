@@ -147,10 +147,10 @@ class _ImageViewerScreenState extends ConsumerState<ImageViewerScreen> {
             minScale: 1.0,
             maxScale: 5.0,
             child: Center(
-              child: CachedNetworkImage(
-                imageUrl: img.url,
+              child: _ResilientCachedNoteImage(
+                urls: img.urlCandidates,
                 fit: BoxFit.contain,
-                placeholder: (_, __) => const Center(
+                placeholder: const Center(
                   child: SizedBox(
                     width: 32,
                     height: 32,
@@ -160,7 +160,7 @@ class _ImageViewerScreenState extends ConsumerState<ImageViewerScreen> {
                     ),
                   ),
                 ),
-                errorWidget: (_, __, ___) => const Center(
+                errorWidget: const Center(
                   child: Icon(
                     SolarIconsOutline.galleryRemove,
                     color: AppColors.fgSoft,
@@ -172,6 +172,53 @@ class _ImageViewerScreenState extends ConsumerState<ImageViewerScreen> {
           );
         },
       ),
+    );
+  }
+}
+
+class _ResilientCachedNoteImage extends StatefulWidget {
+  const _ResilientCachedNoteImage({
+    required this.urls,
+    required this.fit,
+    required this.placeholder,
+    required this.errorWidget,
+  });
+
+  final List<String> urls;
+  final BoxFit fit;
+  final Widget placeholder;
+  final Widget errorWidget;
+
+  @override
+  State<_ResilientCachedNoteImage> createState() =>
+      _ResilientCachedNoteImageState();
+}
+
+class _ResilientCachedNoteImageState extends State<_ResilientCachedNoteImage> {
+  int _urlIndex = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.urls.isEmpty || _urlIndex >= widget.urls.length) {
+      return widget.errorWidget;
+    }
+
+    return CachedNetworkImage(
+      imageUrl: widget.urls[_urlIndex],
+      fit: widget.fit,
+      placeholder: (_, __) => widget.placeholder,
+      errorWidget: (_, __, ___) {
+        if (_urlIndex + 1 < widget.urls.length) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            setState(() {
+              _urlIndex += 1;
+            });
+          });
+          return const SizedBox.shrink();
+        }
+        return widget.errorWidget;
+      },
     );
   }
 }

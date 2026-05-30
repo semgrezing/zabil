@@ -7,6 +7,8 @@ import 'package:solar_icons/solar_icons.dart';
 import '../models/group_model.dart';
 import '../providers/groups_provider.dart';
 import '../widgets/invite_member_sheet.dart';
+import '../../invitations/models/group_pending_invitation_model.dart';
+import '../../invitations/services/invitations_service.dart';
 import '../../../features/auth/providers/auth_provider.dart';
 import '../../../shared/theme/app_colors.dart';
 import '../../../shared/widgets/app_loader.dart';
@@ -24,6 +26,7 @@ class GroupDetailScreen extends ConsumerStatefulWidget {
 
 class _GroupDetailScreenState extends ConsumerState<GroupDetailScreen> {
   bool _updatingAvatar = false;
+  final _invitationsService = InvitationsService();
 
   @override
   Widget build(BuildContext context) {
@@ -293,6 +296,72 @@ class _GroupDetailScreenState extends ConsumerState<GroupDetailScreen> {
               ],
             ),
             const SizedBox(height: 16),
+            FutureBuilder<List<GroupPendingInvitationModel>>(
+              future: _invitationsService.getGroupPending(group.id),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 8),
+                    child: LinearProgressIndicator(minHeight: 2),
+                  );
+                }
+
+                if (snapshot.hasError) {
+                  return Container(
+                    margin: const EdgeInsets.only(bottom: 12),
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context)
+                          .colorScheme
+                          .surfaceContainerHighest,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Text(
+                      'Не удалось загрузить pending-приглашения',
+                      style: TextStyle(fontSize: 12),
+                    ),
+                  );
+                }
+
+                final pending = snapshot.data ?? const [];
+                if (pending.isEmpty) {
+                  return const SizedBox.shrink();
+                }
+
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 12),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context)
+                        .colorScheme
+                        .surfaceContainerHighest
+                        .withValues(alpha: 0.55),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Ожидают подтверждения (${pending.length})',
+                        style: Theme.of(context).textTheme.titleSmall,
+                      ),
+                      const SizedBox(height: 8),
+                      ...pending.map((inv) => ListTile(
+                            dense: true,
+                            contentPadding: EdgeInsets.zero,
+                            leading: const Icon(
+                              SolarIconsOutline.clockCircle,
+                              size: 18,
+                              color: AppColors.fgSoft,
+                            ),
+                            title: Text(inv.receiverLabel),
+                            subtitle: Text('Отправил: ${inv.senderLabel}'),
+                          )),
+                    ],
+                  ),
+                );
+              },
+            ),
             Row(
               children: [
                 Expanded(

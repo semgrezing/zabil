@@ -88,6 +88,23 @@ class PersonalChatMessage {
         createdAt: DateTime.tryParse(json['createdAt']?.toString() ?? '') ??
             DateTime.now(),
       );
+
+  PersonalChatMessage copyWith({
+    DateTime? readAt,
+  }) {
+    return PersonalChatMessage(
+      id: id,
+      senderId: senderId,
+      receiverId: receiverId,
+      body: body,
+      imageUrl: imageUrl,
+      imageMimeType: imageMimeType,
+      imageSize: imageSize,
+      imageCompressed: imageCompressed,
+      readAt: readAt ?? this.readAt,
+      createdAt: createdAt,
+    );
+  }
 }
 
 /// Превью личного чата (последнее сообщение + unread count).

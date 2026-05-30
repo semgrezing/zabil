@@ -40,8 +40,8 @@ class NoteImage {
   factory NoteImage.fromJson(Map<String, dynamic> json) => NoteImage(
         id: json['id'] as String,
         noteId: json['noteId'] as String,
-        filename: json['filename'] as String,
-        path: json['path'] as String,
+      filename: (json['filename'] as String?) ?? '',
+      path: (json['path'] as String?) ?? '',
       );
 
   /// Public URL для статики бэкенда.
@@ -50,9 +50,32 @@ class NoteImage {
   /// статически по `<origin>/uploads/notes/<filename>` без авторизации.
   /// Используем `apiOrigin` (без `/api/v1`), потому что статика смонтирована
   /// в корень, а API — под `/api/v1`.
-  String get url {
+  String get url => urlCandidates.first;
+
+  List<String> get urlCandidates {
+    final candidates = <String>{};
+
+    if (path.startsWith('http://') || path.startsWith('https://')) {
+      candidates.add(path);
+    }
+
+    if (path.startsWith('/uploads/')) {
+      candidates.add('${AppConfig.apiOrigin}$path');
+      candidates.add('${AppConfig.baseUrl}$path');
+    }
+
+    if (filename.startsWith('/uploads/')) {
+      candidates.add('${AppConfig.apiOrigin}$filename');
+      candidates.add('${AppConfig.baseUrl}$filename');
+    }
+
     final f = filename.isNotEmpty ? filename : path.split(RegExp(r'[\\/]')).last;
-    return '${AppConfig.apiOrigin}/uploads/notes/$f';
+    if (f.isNotEmpty) {
+      candidates.add('${AppConfig.apiOrigin}/uploads/notes/$f');
+      candidates.add('${AppConfig.baseUrl}/uploads/notes/$f');
+    }
+
+    return candidates.toList();
   }
 }
 

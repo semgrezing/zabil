@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 import '../../../core/api/api_client.dart';
 import '../../../core/config/api_endpoints.dart';
+import '../models/chat_user_profile.dart';
 import '../models/chat_message.dart';
 
 class ChatsService {
@@ -142,5 +143,10 @@ class ChatsService {
       }
       rethrow;
     }
+  }
+
+  Future<ChatUserProfile> getUserProfile(String userId) async {
+    final response = await _dio.get(ApiEndpoints.userPublicProfile(userId));
+    return ChatUserProfile.fromJson(response.data as Map<String, dynamic>);
   }
 }

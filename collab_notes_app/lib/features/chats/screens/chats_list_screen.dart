@@ -234,8 +234,8 @@ class _GroupsTabState extends ConsumerState<_GroupsTab> {
                     ? snapshot.data!.first
                     : null;
                 final subtitle = message == null
-                    ? 'Создать первое сообщение'
-                    : '${_displayName(message.sender)}: ${_previewText(message)}';
+                  ? '${g.members.length} участников · Создать первое сообщение'
+                  : '${g.members.length} участников · ${_displayName(message.sender)}: ${_previewText(message)}';
                 final trailing = message == null
                     ? null
                     : Text(

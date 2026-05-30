@@ -1,7 +1,12 @@
 import { FastifyInstance } from 'fastify'
 import { authenticate } from '../../middleware/auth.js'
 import { sendInvitationSchema } from './schema.js'
-import { sendInvitation, getIncomingInvitations, respondToInvitation } from './service.js'
+import {
+  sendInvitation,
+  getIncomingInvitations,
+  getGroupPendingInvitations,
+  respondToInvitation,
+} from './service.js'
 import { AppError } from '../../utils/errors.js'
 
 export async function invitationsRoutes(app: FastifyInstance) {
@@ -25,6 +30,18 @@ export async function invitationsRoutes(app: FastifyInstance) {
   app.get('/incoming', { preHandler: [authenticate] }, async (request, reply) => {
     const invitations = await getIncomingInvitations(app, request.user.userId)
     return reply.send(invitations)
+  })
+
+  // GET /invitations/group/:groupId/pending
+  app.get('/group/:groupId/pending', { preHandler: [authenticate] }, async (request, reply) => {
+    const { groupId } = request.params as { groupId: string }
+    try {
+      const invitations = await getGroupPendingInvitations(app, request.user.userId, groupId)
+      return reply.send(invitations)
+    } catch (err) {
+      if (err instanceof AppError) return reply.status(err.statusCode).send({ error: err.message, code: err.code })
+      throw err
+    }
   })
 
   // POST /invitations/:id/accept

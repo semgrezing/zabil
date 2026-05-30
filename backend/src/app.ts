@@ -25,6 +25,7 @@ import { activityRoutes } from './modules/activity/routes.js'
 import {
   addConnection, removeConnection,
   joinNote, leaveNote, leaveAllNotes, broadcastToNote,
+  sendToUser,
 } from './modules/chats/wsHub.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -52,7 +53,7 @@ export async function buildApp() {
 
   // Security: Rate limiting
   await app.register(rateLimit, {
-    max: 100,
+    max: 300,
     timeWindow: '1 minute',
   })
 
@@ -123,6 +124,9 @@ export async function buildApp() {
   }, { prefix: '/api/v1' })
 
   // WebSocket endpoint: /api/v1/ws?token=<JWT>
+  const chatTypingThrottleMs = 900
+  const chatTypingLastSentAt = new Map<string, number>()
+
   await app.register(async (wsApi) => {
     wsApi.get('/ws', { websocket: true }, (socket, req) => {
       const ws = socket.socket
@@ -191,6 +195,62 @@ export async function buildApp() {
                 noteId: msg.noteId,
                 userId,
               })
+            } else if (msg.type === 'chat_typing') {
+              const now = Date.now()
+              const kind = msg.kind as string | undefined
+
+              if (kind === 'group' && typeof msg.groupId === 'string') {
+                const groupId = msg.groupId as string
+                const throttleKey = `${userId}:group:${groupId}`
+                const last = chatTypingLastSentAt.get(throttleKey) ?? 0
+                if (now - last < chatTypingThrottleMs) return
+                chatTypingLastSentAt.set(throttleKey, now)
+
+                const member = await app.prisma.groupMember.findUnique({
+                  where: { groupId_userId: { groupId, userId } },
+                  select: { userId: true },
+                })
+                if (!member) return
+
+                const members = await app.prisma.groupMember.findMany({
+                  where: { groupId, userId: { not: userId } },
+                  select: { userId: true },
+                })
+                const displayName = await getDisplayName()
+                const payload = {
+                  type: 'chat_typing',
+                  kind: 'group',
+                  data: {
+                    groupId,
+                    senderId: userId,
+                    displayName,
+                  },
+                }
+                members.forEach((m) => sendToUser(m.userId, payload))
+              } else if (kind === 'personal' && typeof msg.userId === 'string') {
+                const peerUserId = msg.userId as string
+                const throttleKey = `${userId}:personal:${peerUserId}`
+                const last = chatTypingLastSentAt.get(throttleKey) ?? 0
+                if (now - last < chatTypingThrottleMs) return
+                chatTypingLastSentAt.set(throttleKey, now)
+
+                const peer = await app.prisma.user.findUnique({
+                  where: { id: peerUserId },
+                  select: { id: true },
+                })
+                if (!peer) return
+
+                const displayName = await getDisplayName()
+                sendToUser(peerUserId, {
+                  type: 'chat_typing',
+                  kind: 'personal',
+                  data: {
+                    userId: peerUserId,
+                    senderId: userId,
+                    displayName,
+                  },
+                })
+              }
             }
           } catch (_) {
             // Ignore malformed messages

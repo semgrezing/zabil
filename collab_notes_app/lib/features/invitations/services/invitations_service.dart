@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 import '../../../core/api/api_client.dart';
 import '../../../core/config/api_endpoints.dart';
+import '../models/group_pending_invitation_model.dart';
 import '../models/invitation_model.dart';
 import '../models/invitation_action_result.dart';
 
@@ -11,6 +12,13 @@ class InvitationsService {
     final response = await _dio.get(ApiEndpoints.incomingInvitations);
     return (response.data as List)
         .map((e) => InvitationModel.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<List<GroupPendingInvitationModel>> getGroupPending(String groupId) async {
+    final response = await _dio.get(ApiEndpoints.groupPendingInvitations(groupId));
+    return (response.data as List)
+        .map((e) => GroupPendingInvitationModel.fromJson(e as Map<String, dynamic>))
         .toList();
   }
 

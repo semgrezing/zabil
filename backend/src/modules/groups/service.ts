@@ -6,6 +6,7 @@ import path from 'path'
 import { CreateGroupDto, UpdateGroupDto } from './schema.js'
 import { errors } from '../../utils/errors.js'
 import { env } from '../../config/env.js'
+import { notifyGroupDeleted, notifyGroupMemberRemoved } from '../notifications/service.js'
 
 const ALLOWED_MIME_TYPES = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/webp'])
 const ALLOWED_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp'])
@@ -201,6 +202,17 @@ export async function removeGroupMember(
 ) {
   await requireManageRole(app, groupId, actorUserId)
 
+  const group = await app.prisma.group.findUnique({
+    where: { id: groupId },
+    select: { title: true },
+  })
+  if (!group) throw errors.notFound('Группа')
+
+  const actor = await app.prisma.user.findUnique({
+    where: { id: actorUserId },
+    select: { username: true, displayName: true },
+  })
+
   const target = await app.prisma.groupMember.findUnique({
     where: { groupId_userId: { groupId, userId: targetUserId } },
     select: { role: true },
@@ -214,6 +226,15 @@ export async function removeGroupMember(
   await app.prisma.groupMember.delete({
     where: { groupId_userId: { groupId, userId: targetUserId } },
   })
+
+  notifyGroupMemberRemoved(app, {
+    userId: targetUserId,
+    groupId,
+    groupTitle: group.title,
+    actorName: actor?.displayName?.trim() || actor?.username || 'Участник',
+  }).catch((e: unknown) =>
+    console.error('[notify] notifyGroupMemberRemoved:', e),
+  )
 
   return { removed: true }
 }
@@ -391,6 +412,15 @@ export async function deleteGroup(app: FastifyInstance, groupId: string, userId:
     throw errors.forbidden()
   }
 
+  const actor = await app.prisma.user.findUnique({
+    where: { id: userId },
+    select: { username: true, displayName: true },
+  })
+
+  const recipients = group.members
+    .map((m) => m.userId)
+    .filter((id) => id !== userId)
+
   const avatars = await app.prisma.avatarHistory.findMany({
     where: { entityType: 'group', entityId: groupId },
     select: { avatarUrl: true },
@@ -432,6 +462,19 @@ export async function deleteGroup(app: FastifyInstance, groupId: string, userId:
   } catch (_) {
     // best-effort cleanup
   }
+
+  await Promise.all(
+    recipients.map((targetUserId) =>
+      notifyGroupDeleted(app, {
+        userId: targetUserId,
+        groupId,
+        groupTitle: group.title,
+        actorName: actor?.displayName?.trim() || actor?.username || 'Владелец',
+      }).catch((e: unknown) =>
+        console.error('[notify] notifyGroupDeleted:', e),
+      ),
+    ),
+  )
 
   return { deleted: true }
 }

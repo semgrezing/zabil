@@ -1,3 +1,5 @@
+﻿import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -7,19 +9,23 @@ import 'package:solar_icons/solar_icons.dart';
 
 import '../../../features/auth/providers/auth_provider.dart';
 import '../../../core/config/app_config.dart';
+import '../../../core/realtime/ws_client.dart';
+import '../../groups/models/group_model.dart';
+import '../../groups/services/groups_service.dart';
 import '../../../shared/theme/app_colors.dart';
 import '../../../shared/theme/app_dimensions.dart';
 import '../../../shared/widgets/app_loader.dart';
 import '../models/chat_message.dart';
 import '../providers/chats_provider.dart';
 import 'chat_image_viewer_screen.dart';
+import 'chat_user_profile_screen.dart';
 
-/// Универсальный экран чата.
+/// ╨г╨╜╨╕╨▓╨╡╤А╤Б╨░╨╗╤М╨╜╤Л╨╣ ╤Н╨║╤А╨░╨╜ ╤З╨░╤В╨░.
 ///
-/// Один из трёх режимов:
-/// - group: `groupId` задан, `noteId` = null → чат группы
-/// - note:  `groupId` + `noteId` → чат заметки (filtered view)
-/// - personal: `userId` задан → 1:1 чат
+/// ╨Ю╨┤╨╕╨╜ ╨╕╨╖ ╤В╤А╤С╤Е ╤А╨╡╨╢╨╕╨╝╨╛╨▓:
+/// - group: `groupId` ╨╖╨░╨┤╨░╨╜, `noteId` = null тЖТ ╤З╨░╤В ╨│╤А╤Г╨┐╨┐╤Л
+/// - note:  `groupId` + `noteId` тЖТ ╤З╨░╤В ╨╖╨░╨╝╨╡╤В╨║╨╕ (filtered view)
+/// - personal: `userId` ╨╖╨░╨┤╨░╨╜ тЖТ 1:1 ╤З╨░╤В
 class ChatScreen extends ConsumerStatefulWidget {
   final String? groupId;
   final String? noteId;
@@ -46,11 +52,34 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   final _inputCtrl = TextEditingController();
   final _scrollCtrl = ScrollController();
   bool _sending = false;
+  StreamSubscription<WsEvent>? _wsSub;
+  GroupModel? _groupMeta;
+  final Map<String, _TypingUser> _typingUsers = {};
+
+  bool get _isTopLevelGroupChat => widget.groupId != null && widget.noteId == null;
+
+  String? get _groupHintLabel {
+    if (!_isTopLevelGroupChat) return widget.subtitle;
+    final count = _groupMeta?.members.length;
+    if (count == null) return widget.subtitle;
+    return '$count участников';
+  }
+
+  String? get _typingLabel {
+    if (_typingUsers.isEmpty) return null;
+    final names = _typingUsers.values.map((t) => t.name).toList()..sort();
+    if (names.length == 1) {
+      return '${names.first} печатает...';
+    }
+    return '${names.join(', ')} печатают...';
+  }
 
   @override
   void initState() {
     super.initState();
-    // Mark-as-read для личного чата при открытии
+    _subscribeTyping();
+    _loadGroupMeta();
+    // Mark-as-read ╨┤╨╗╤П ╨╗╨╕╤З╨╜╨╛╨│╨╛ ╤З╨░╤В╨░ ╨┐╤А╨╕ ╨╛╤В╨║╤А╤Л╤В╨╕╨╕
     if (widget.userId != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         ref
@@ -62,9 +91,61 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
   @override
   void dispose() {
+    _wsSub?.cancel();
+    for (final entry in _typingUsers.values) {
+      entry.timer.cancel();
+    }
     _inputCtrl.dispose();
     _scrollCtrl.dispose();
     super.dispose();
+  }
+
+  void _subscribeTyping() {
+    final ws = ref.read(wsClientProvider);
+    final me = ref.read(authStateProvider).valueOrNull?.user?.id;
+    _wsSub = ws.events.listen((event) {
+      if (event is! ChatTypingEvent) return;
+      if (event.kind == 'group' && widget.groupId != null) {
+        final data = event.data;
+        if (data['groupId']?.toString() != widget.groupId) return;
+        final senderId = data['senderId']?.toString();
+        if (senderId == null || senderId == me) return;
+        final displayName = data['displayName']?.toString();
+        _upsertTyping(senderId, (displayName == null || displayName.isEmpty) ? 'Пользователь' : displayName);
+      }
+      if (event.kind == 'personal' && widget.userId != null) {
+        final data = event.data;
+        final senderId = data['senderId']?.toString();
+        if (senderId == null || senderId == me || senderId != widget.userId) return;
+        final displayName = data['displayName']?.toString();
+        _upsertTyping(senderId, (displayName == null || displayName.isEmpty) ? 'Собеседник' : displayName);
+      }
+    });
+  }
+
+  Future<void> _loadGroupMeta() async {
+    if (widget.groupId == null) return;
+    try {
+      final group = await GroupsService().getGroupById(widget.groupId!);
+      if (!mounted) return;
+      setState(() => _groupMeta = group);
+    } catch (_) {
+      // noop: keep existing subtitle when metadata unavailable
+    }
+  }
+
+  void _upsertTyping(String userId, String name) {
+    _typingUsers[userId]?.timer.cancel();
+    final timer = Timer(const Duration(seconds: 3), () {
+      if (!mounted) return;
+      setState(() {
+        _typingUsers.remove(userId);
+      });
+    });
+    if (!mounted) return;
+    setState(() {
+      _typingUsers[userId] = _TypingUser(name: name, timer: timer);
+    });
   }
 
   Future<void> _send() async {
@@ -84,8 +165,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             .send(body: text);
       }
       _inputCtrl.clear();
-      // Список рендерится reverse=true, новое сообщение в начале —
-      // прокручиваем к началу списка (визуально вниз).
+      // ╨б╨┐╨╕╤Б╨╛╨║ ╤А╨╡╨╜╨┤╨╡╤А╨╕╤В╤Б╤П reverse=true, ╨╜╨╛╨▓╨╛╨╡ ╤Б╨╛╨╛╨▒╤Й╨╡╨╜╨╕╨╡ ╨▓ ╨╜╨░╤З╨░╨╗╨╡ тАФ
+      // ╨┐╤А╨╛╨║╤А╤Г╤З╨╕╨▓╨░╨╡╨╝ ╨║ ╨╜╨░╤З╨░╨╗╤Г ╤Б╨┐╨╕╤Б╨║╨░ (╨▓╨╕╨╖╤Г╨░╨╗╤М╨╜╨╛ ╨▓╨╜╨╕╨╖).
       if (_scrollCtrl.hasClients) {
         _scrollCtrl.animateTo(
           0,
@@ -95,7 +176,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       }
     } catch (e) {
       messenger.showSnackBar(
-        SnackBar(content: Text('Не удалось отправить: $e')),
+        SnackBar(content: Text('╨Э╨╡ ╤Г╨┤╨░╨╗╨╛╤Б╤М ╨╛╤В╨┐╤А╨░╨▓╨╕╤В╤М: $e')),
       );
     } finally {
       if (mounted) setState(() => _sending = false);
@@ -153,7 +234,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Не удалось отправить изображения: $e')),
+        SnackBar(content: Text('╨Э╨╡ ╤Г╨┤╨░╨╗╨╛╤Б╤М ╨╛╤В╨┐╤А╨░╨▓╨╕╤В╤М ╨╕╨╖╨╛╨▒╤А╨░╨╢╨╡╨╜╨╕╤П: $e')),
       );
     } finally {
       if (mounted) setState(() => _sending = false);
@@ -170,14 +251,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           children: [
             ListTile(
               leading: const Icon(SolarIconsOutline.gallery),
-              title: const Text('Отправить со сжатием'),
-              subtitle: const Text('Быстрее отправка, меньше размер'),
+              title: const Text('╨Ю╤В╨┐╤А╨░╨▓╨╕╤В╤М ╤Б╨╛ ╤Б╨╢╨░╤В╨╕╨╡╨╝'),
+              subtitle: const Text('╨С╤Л╤Б╤В╤А╨╡╨╡ ╨╛╤В╨┐╤А╨░╨▓╨║╨░, ╨╝╨╡╨╜╤М╤И╨╡ ╤А╨░╨╖╨╝╨╡╤А'),
               onTap: () => Navigator.of(ctx).pop(true),
             ),
             ListTile(
               leading: const Icon(SolarIconsOutline.gallery),
-              title: const Text('Отправить без сжатия'),
-              subtitle: const Text('Оригинальное качество'),
+              title: const Text('╨Ю╤В╨┐╤А╨░╨▓╨╕╤В╤М ╨▒╨╡╨╖ ╤Б╨╢╨░╤В╨╕╤П'),
+              subtitle: const Text('╨Ю╤А╨╕╨│╨╕╨╜╨░╨╗╤М╨╜╨╛╨╡ ╨║╨░╤З╨╡╤Б╤В╨▓╨╛'),
               onTap: () => Navigator.of(ctx).pop(false),
             ),
             const SizedBox(height: 8),
@@ -194,10 +275,18 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(widget.title),
-            if (widget.subtitle != null)
+            if (widget.groupId != null)
+              GestureDetector(
+                onTap: () => context.push('/groups/${widget.groupId}'),
+                child: Text(widget.title),
+              )
+            else
+              Text(widget.title),
+            if ((_typingLabel != null && _isTopLevelGroupChat) || _groupHintLabel != null)
               Text(
-                widget.subtitle!,
+                (_typingLabel != null && _isTopLevelGroupChat)
+                    ? _typingLabel!
+                    : _groupHintLabel!,
                 style: TextStyle(
                   fontSize: 12,
                   color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.7),
@@ -209,10 +298,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           if (widget.noteId != null && widget.groupId != null)
             IconButton(
               icon: const Icon(SolarIconsOutline.chatRound),
-              tooltip: 'Открыть чат группы',
+              tooltip: '╨Ю╤В╨║╤А╤Л╤В╤М ╤З╨░╤В ╨│╤А╤Г╨┐╨┐╤Л',
               onPressed: () {
                 context.push(
-                  '/chats/group/${widget.groupId}?title=${Uri.encodeComponent(widget.subtitle ?? 'Группа')}',
+                  '/chats/group/${widget.groupId}?title=${Uri.encodeComponent(widget.subtitle ?? '╨У╤А╤Г╨┐╨┐╨░')}',
                 );
               },
             ),
@@ -221,6 +310,18 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       body: Column(
         children: [
           Expanded(child: _buildMessages(context)),
+          if (_typingLabel != null && !_isTopLevelGroupChat)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 6),
+              child: Text(
+                _typingLabel!,
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: AppColors.fgSoft,
+                ),
+              ),
+            ),
           SafeArea(top: false, child: _buildComposer(context)),
         ],
       ),
@@ -236,14 +337,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       final async = ref.watch(groupChatProvider(key));
       return async.when(
         loading: () => const AppLoader(),
-        error: (e, _) => Center(child: Text('Ошибка загрузки: $e')),
+        error: (e, _) => Center(child: Text('╨Ю╤И╨╕╨▒╨║╨░ ╨╖╨░╨│╤А╤Г╨╖╨║╨╕: $e')),
         data: (messages) => _renderGroup(context, messages, currentUserId),
       );
     } else {
       final async = ref.watch(personalChatProvider(widget.userId!));
       return async.when(
         loading: () => const AppLoader(),
-        error: (e, _) => Center(child: Text('Ошибка загрузки: $e')),
+        error: (e, _) => Center(child: Text('╨Ю╤И╨╕╨▒╨║╨░ ╨╖╨░╨│╤А╤Г╨╖╨║╨╕: $e')),
         data: (messages) => _renderPersonal(context, messages, currentUserId),
       );
     }
@@ -259,7 +360,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         child: Padding(
           padding: EdgeInsets.all(32),
           child: Text(
-            'Сообщений пока нет. Напишите первым.',
+            '╨б╨╛╨╛╨▒╤Й╨╡╨╜╨╕╨╣ ╨┐╨╛╨║╨░ ╨╜╨╡╤В. ╨Э╨░╨┐╨╕╤И╨╕╤В╨╡ ╨┐╨╡╤А╨▓╤Л╨╝.',
             style: TextStyle(color: AppColors.fgSoft),
             textAlign: TextAlign.center,
           ),
@@ -280,11 +381,20 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           time: m.createdAt,
           mine: mine,
           authorName: mine ? null : _displayName(m.sender),
+          authorTap: mine
+              ? null
+              : () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => ChatUserProfileScreen(userId: m.senderId),
+                    ),
+                  );
+                },
           noteTitle: m.noteTitle,
           noteColorLabel: m.noteColorLabel,
           onNoteTap: (m.noteId != null && widget.noteId == null)
               ? () => context.push(
-                    '/chats/note/${m.noteId}?groupId=${widget.groupId}&title=${Uri.encodeComponent(m.noteTitle ?? 'Заметка')}&groupTitle=${Uri.encodeComponent(widget.title)}',
+                    '/chats/note/${m.noteId}?groupId=${widget.groupId}&title=${Uri.encodeComponent(m.noteTitle ?? '╨Ч╨░╨╝╨╡╤В╨║╨░')}&groupTitle=${Uri.encodeComponent(widget.title)}',
                   )
               : null,
         );
@@ -302,7 +412,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         child: Padding(
           padding: EdgeInsets.all(32),
           child: Text(
-            'Начните диалог — напишите первое сообщение.',
+            '╨Э╨░╤З╨╜╨╕╤В╨╡ ╨┤╨╕╨░╨╗╨╛╨│ тАФ ╨╜╨░╨┐╨╕╤И╨╕╤В╨╡ ╨┐╨╡╤А╨▓╨╛╨╡ ╤Б╨╛╨╛╨▒╤Й╨╡╨╜╨╕╨╡.',
             style: TextStyle(color: AppColors.fgSoft),
             textAlign: TextAlign.center,
           ),
@@ -323,6 +433,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           time: m.createdAt,
           mine: mine,
           authorName: null,
+          deliveryStatus: mine
+              ? (m.readAt != null ? _MessageDeliveryStatus.read : _MessageDeliveryStatus.sent)
+              : null,
         );
       },
     );
@@ -338,7 +451,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         children: [
           IconButton(
             icon: const Icon(SolarIconsOutline.gallery),
-            tooltip: 'Изображения',
+            tooltip: '╨Ш╨╖╨╛╨▒╤А╨░╨╢╨╡╨╜╨╕╤П',
             onPressed: _sending ? null : _pickAndSendImages,
           ),
           Expanded(
@@ -347,9 +460,18 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               minLines: 1,
               maxLines: 5,
               textInputAction: TextInputAction.send,
+              onChanged: (value) {
+                if (value.trim().isEmpty) return;
+                final ws = ref.read(wsClientProvider);
+                if (widget.groupId != null) {
+                  ws.sendChatTypingGroup(widget.groupId!);
+                } else if (widget.userId != null) {
+                  ws.sendChatTypingPersonal(widget.userId!);
+                }
+              },
               onSubmitted: (_) => _send(),
               decoration: const InputDecoration(
-                hintText: 'Сообщение',
+                hintText: '╨б╨╛╨╛╨▒╤Й╨╡╨╜╨╕╨╡',
                 filled: true,
               ),
             ),
@@ -404,6 +526,8 @@ class _MessageBubble extends StatelessWidget {
   final DateTime time;
   final bool mine;
   final String? authorName;
+  final VoidCallback? authorTap;
+  final _MessageDeliveryStatus? deliveryStatus;
   final String? noteTitle;
   final String? noteColorLabel;
   final VoidCallback? onNoteTap;
@@ -414,6 +538,8 @@ class _MessageBubble extends StatelessWidget {
     required this.time,
     required this.mine,
     required this.authorName,
+    this.authorTap,
+    this.deliveryStatus,
     this.noteTitle,
     this.noteColorLabel,
     this.onNoteTap,
@@ -448,12 +574,15 @@ class _MessageBubble extends StatelessWidget {
                     if (authorName != null)
                       Padding(
                         padding: const EdgeInsets.only(bottom: 4, left: 4),
-                        child: Text(
-                          authorName!,
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600,
-                            color: AppColors.fgSoft.withValues(alpha: 0.75),
+                        child: GestureDetector(
+                          onTap: authorTap,
+                          child: Text(
+                            authorName!,
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.fgSoft.withValues(alpha: 0.75),
+                            ),
                           ),
                         ),
                       ),
@@ -485,12 +614,9 @@ class _MessageBubble extends StatelessWidget {
                     ),
                     Padding(
                       padding: const EdgeInsets.only(top: 4, left: 4),
-                      child: Text(
-                        formatter.format(time.toLocal()),
-                        style: TextStyle(
-                          fontSize: 10,
-                          color: AppColors.fgSoft.withValues(alpha: 0.55),
-                        ),
+                      child: _metaRow(
+                        formatter: formatter,
+                        fg: AppColors.fgSoft.withValues(alpha: 0.7),
                       ),
                     ),
                   ],
@@ -561,12 +687,15 @@ class _MessageBubble extends StatelessWidget {
                     if (authorName != null)
                       Padding(
                         padding: const EdgeInsets.only(bottom: 2),
-                        child: Text(
-                          authorName!,
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600,
-                            color: fg.withValues(alpha: 0.75),
+                        child: GestureDetector(
+                          onTap: authorTap,
+                          child: Text(
+                            authorName!,
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: fg.withValues(alpha: 0.75),
+                            ),
                           ),
                         ),
                       ),
@@ -603,12 +732,9 @@ class _MessageBubble extends StatelessWidget {
                       ),
                     ],
                     const SizedBox(height: 2),
-                    Text(
-                      formatter.format(time.toLocal()),
-                      style: TextStyle(
-                        fontSize: 10,
-                        color: fg.withValues(alpha: 0.55),
-                      ),
+                    _metaRow(
+                      formatter: formatter,
+                      fg: fg.withValues(alpha: 0.65),
                     ),
                   ],
                 ),
@@ -617,6 +743,43 @@ class _MessageBubble extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _metaRow({
+    required DateFormat formatter,
+    required Color fg,
+  }) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          formatter.format(time.toLocal()),
+          style: TextStyle(
+            fontSize: 10,
+            color: fg,
+          ),
+        ),
+        if (mine && deliveryStatus != null) ...[
+          const SizedBox(width: 6),
+          Icon(
+            deliveryStatus == _MessageDeliveryStatus.read
+                ? Icons.done_all_rounded
+                : Icons.done_rounded,
+            size: 12,
+            color: deliveryStatus == _MessageDeliveryStatus.read
+                ? AppColors.success
+                : fg,
+          ),
+          const SizedBox(width: 4),
+          Text(
+            deliveryStatus == _MessageDeliveryStatus.read
+                ? 'Прочитано'
+                : 'Отправлено',
+            style: TextStyle(fontSize: 10, color: fg),
+          ),
+        ],
+      ],
     );
   }
 
@@ -629,3 +792,12 @@ class _MessageBubble extends StatelessWidget {
     }
   }
 }
+
+class _TypingUser {
+  final String name;
+  final Timer timer;
+
+  _TypingUser({required this.name, required this.timer});
+}
+
+enum _MessageDeliveryStatus { sent, read }

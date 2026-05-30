@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:confetti/confetti.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -9,6 +9,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:solar_icons/solar_icons.dart';
 import '../providers/notes_provider.dart';
 import '../models/note_model.dart';
+import '../../auth/providers/auth_provider.dart';
 import '../../../shared/theme/app_colors.dart';
 import '../../../shared/widgets/app_loader.dart';
 import '../../../shared/widgets/typing_indicator.dart';
@@ -29,19 +30,25 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
   final _titleCtrl = TextEditingController();
   final _contentCtrl = TextEditingController();
   final _checklistCtrl = TextEditingController();
+  final _titleFocus = FocusNode();
+  final _contentFocus = FocusNode();
   bool _isDirty = false;
   bool _isSaving = false;
   bool _hasSavedOnce = false;
   Timer? _debounce;
-
-  late final ConfettiController _confettiCtrl = ConfettiController(
-    duration: const Duration(seconds: 3),
-  );
+  DateTime? _lastHydratedUpdatedAt;
+  String? _lastHydratedNoteId;
+  NoteModel? _pendingRemoteNote;
+  bool _showRemoteBanner = false;
+  Timer? _remotePoll;
+  bool _uploadingImages = false;
 
   // Presence & typing
   StreamSubscription? _wsSub;
   WsClient? _wsClient;
   final List<NoteViewer> _viewers = [];
+  String? _currentUserId;
+  String? _currentUserDisplayName;
   String? _typingUserId;
   Timer? _typingTimer;
   Timer? _typingDebounce;
@@ -51,12 +58,23 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
   @override
   void initState() {
     super.initState();
+    final user = ref.read(authStateProvider).valueOrNull?.user;
+    _currentUserId = user?.id;
+    _currentUserDisplayName = user?.displayLabel;
     if (!_isNew) {
       _setupPresence();
+      _startRemotePolling();
     }
   }
 
   void _setupPresence() {
+    final selfId = _currentUserId;
+    final selfName = _currentUserDisplayName;
+    if (selfId != null && selfName != null) {
+      _viewers.add(NoteViewer(userId: selfId, displayName: selfName));
+      _sortViewers();
+    }
+
     final ws = ref.read(wsClientProvider);
     _wsClient = ws;
     ws.sendPresence(widget.noteId!, 'join');
@@ -73,6 +91,7 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
           } else {
             _viewers.removeWhere((v) => v.userId == event.userId);
           }
+          _sortViewers();
         });
       } else if (event is NoteTypingEvent && event.noteId == widget.noteId) {
         setState(() => _typingUserId = event.userId);
@@ -81,6 +100,25 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
           if (mounted) setState(() => _typingUserId = null);
         });
       }
+    });
+  }
+
+  void _sortViewers() {
+    _viewers.sort((a, b) {
+      final aSelf = a.userId == _currentUserId;
+      final bSelf = b.userId == _currentUserId;
+      if (aSelf && !bSelf) return -1;
+      if (!aSelf && bSelf) return 1;
+      return a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase());
+    });
+  }
+
+  void _startRemotePolling() {
+    _remotePoll?.cancel();
+    _remotePoll = Timer.periodic(const Duration(seconds: 5), (_) {
+      final id = widget.noteId;
+      if (id == null || !mounted) return;
+      _checkForRemoteUpdates(id, fromPullToRefresh: false);
     });
   }
 
@@ -99,11 +137,13 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
     _wsSub?.cancel();
     _typingTimer?.cancel();
     _typingDebounce?.cancel();
-    _confettiCtrl.dispose();
+    _remotePoll?.cancel();
     _debounce?.cancel();
     _titleCtrl.dispose();
     _contentCtrl.dispose();
     _checklistCtrl.dispose();
+    _titleFocus.dispose();
+    _contentFocus.dispose();
     super.dispose();
   }
 
@@ -126,10 +166,7 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
   }
 
   Widget _buildEditor(NoteModel note) {
-    if (!_isDirty) {
-      _titleCtrl.text = note.title;
-      _contentCtrl.text = note.content;
-    }
+    _hydrateControllersFromNote(note);
 
     return PopScope(
       canPop: !_isSaving,
@@ -187,9 +224,13 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
         ),
         body: Stack(
           children: [
-            ListView(
-              padding: const EdgeInsets.all(16),
-              children: [
+            RefreshIndicator(
+              onRefresh: () => _checkForRemoteUpdates(note.id, fromPullToRefresh: true),
+              child: ListView(
+                padding: const EdgeInsets.all(16),
+                children: [
+            if (_showRemoteBanner && _pendingRemoteNote != null)
+              _buildRemoteUpdateBanner(note.id),
             // Presence bar (#2) + Typing indicator (#6)
             if (_viewers.isNotEmpty || _typingUserId != null) ...[
               if (_viewers.isNotEmpty)
@@ -217,6 +258,7 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
             // Title
             TextField(
               controller: _titleCtrl,
+              focusNode: _titleFocus,
               style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                     fontWeight: FontWeight.w700,
                   ),
@@ -258,6 +300,7 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
             // Content
             TextField(
               controller: _contentCtrl,
+              focusNode: _contentFocus,
               maxLines: null,
               keyboardType: TextInputType.multiline,
               decoration: const InputDecoration(
@@ -297,19 +340,13 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
                       ref
                           .read(noteDetailProvider(note.id).notifier)
                           .toggleChecklistItem(item.id, completed);
-                      if (completed && note.checklistItems.length > 1) {
-                        final allDone = note.checklistItems.every(
-                          (i) => i.id == item.id || i.completed,
-                        );
-                        if (allDone) {
-                          HapticFeedback.mediumImpact();
-                          _confettiCtrl.play();
-                        }
-                      }
                     },
                     onDelete: () => ref
                         .read(noteDetailProvider(note.id).notifier)
                         .deleteChecklistItem(item.id),
+                    onRename: (text) => ref
+                        .read(noteDetailProvider(note.id).notifier)
+                        .updateChecklistItemText(item.id, text),
                   );
                 },
               ),
@@ -347,12 +384,13 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
                 ),
                 itemCount: note.images.length,
                 itemBuilder: (context, index) {
+                  final image = note.images[index];
                   return ClipRRect(
                     borderRadius: BorderRadius.circular(8),
-                    child: Image.network(
-                      note.images[index].url,
+                    child: _ResilientNoteImage(
+                      urls: image.urlCandidates,
                       fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => Container(
+                      errorBuilder: (_) => Container(
                         color: Theme.of(context).colorScheme.surfaceContainerHighest,
                         child: const Icon(Icons.broken_image_outlined),
                       ),
@@ -367,36 +405,147 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
             OutlinedButton.icon(
               icon: const Icon(Icons.image_outlined),
               label: const Text('Прикрепить изображение'),
-              onPressed: () => _pickAndUploadImage(note.id),
+              onPressed:
+                  _uploadingImages ? null : () => _pickAndUploadImages(note.id),
             ),
+            if (_uploadingImages)
+              const Padding(
+                padding: EdgeInsets.only(top: 8),
+                child: LinearProgressIndicator(minHeight: 2),
+              ),
           ],
-            ),
-            Align(
-              alignment: Alignment.topCenter,
-              child: ConfettiWidget(
-                confettiController: _confettiCtrl,
-                blastDirectionality: BlastDirectionality.explosive,
-                shouldLoop: false,
-                numberOfParticles: 30,
-                emissionFrequency: 0.05,
-                gravity: 0.1,
-                maxBlastForce: 30,
-                minBlastForce: 10,
-                colors: const [
-                  Color(0xFFFF6B6B),
-                  Color(0xFFF59F00),
-                  Color(0xFFFFD43B),
-                  Color(0xFF69DB7C),
-                  Color(0xFF4DABF7),
-                  Color(0xFF9775FA),
-                  Color(0xFFF783AC),
-                ],
               ),
             ),
           ],
         ),
       ),
     );
+  }
+
+  Widget _buildRemoteUpdateBanner(String noteId) {
+    final pending = _pendingRemoteNote;
+    if (pending == null) return const SizedBox.shrink();
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      decoration: BoxDecoration(
+        color: AppColors.bg3,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+      ),
+      child: Row(
+        children: [
+          const Icon(SolarIconsOutline.bell, size: 16, color: AppColors.fgSoft),
+          const SizedBox(width: 8),
+          const Expanded(
+            child: Text(
+              'Есть новые изменения в заметке',
+              style: TextStyle(fontSize: 13, color: AppColors.fgSoft),
+            ),
+          ),
+          TextButton(
+            onPressed: () => _resolveRemoteConflict(noteId, pending),
+            child: const Text('Открыть'),
+          ),
+          TextButton(
+            onPressed: () {
+              setState(() => _showRemoteBanner = false);
+            },
+            child: const Text('Позже'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _checkForRemoteUpdates(
+    String noteId, {
+    required bool fromPullToRefresh,
+  }) async {
+    if (!mounted || _isSaving) return;
+
+    final current = ref.read(noteDetailProvider(noteId)).valueOrNull;
+    if (current == null) return;
+
+    try {
+      final latest = await ref.read(notesServiceProvider).getNoteById(noteId);
+      final isNewer = latest.updatedAt.isAfter(current.updatedAt);
+      if (!isNewer) {
+        if (fromPullToRefresh && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Изменений не найдено')),
+          );
+        }
+        return;
+      }
+
+      if (_hasLocalInput()) {
+        if (!mounted) return;
+        setState(() {
+          _pendingRemoteNote = latest;
+          _showRemoteBanner = true;
+        });
+        if (fromPullToRefresh) {
+          await _resolveRemoteConflict(noteId, latest);
+        }
+        return;
+      }
+
+      ref.read(noteDetailProvider(noteId).notifier).applyRemoteSnapshot(latest);
+      if (!mounted) return;
+      setState(() {
+        _pendingRemoteNote = null;
+        _showRemoteBanner = false;
+      });
+      if (fromPullToRefresh) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Заметка обновлена')),
+        );
+      }
+    } catch (_) {
+      if (fromPullToRefresh && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Не удалось обновить заметку')),
+        );
+      }
+    }
+  }
+
+  bool _hasLocalInput() {
+    return _isDirty || _titleFocus.hasFocus || _contentFocus.hasFocus;
+  }
+
+  Future<void> _resolveRemoteConflict(String noteId, NoteModel latest) async {
+    if (!mounted) return;
+
+    final apply = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Найдены новые изменения'),
+        content: const Text(
+          'В заметке появились изменения на сервере. Применить их сейчас? Локальный несохраненный ввод будет заменен.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Оставить мое'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Применить'),
+          ),
+        ],
+      ),
+    );
+
+    if (apply != true || !mounted) return;
+    ref.read(noteDetailProvider(noteId).notifier).applyRemoteSnapshot(latest);
+    setState(() {
+      _isDirty = false;
+      _pendingRemoteNote = null;
+      _showRemoteBanner = false;
+    });
   }
 
   void _onEdited(String noteId) {
@@ -453,15 +602,22 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
     if (title.isEmpty) return;
     setState(() => _isSaving = true);
     try {
+      final content = _contentCtrl.text;
       await ref.read(notesProvider.notifier).updateNote(
             noteId,
             title: title,
-            content: _contentCtrl.text,
+            content: content,
+          );
+      ref.read(noteDetailProvider(noteId).notifier).applyLocalTextEdits(
+            title: title,
+            content: content,
           );
       if (mounted) {
         setState(() {
           _isDirty = false;
           _hasSavedOnce = true;
+          _lastHydratedNoteId = noteId;
+          _lastHydratedUpdatedAt = DateTime.now();
         });
       }
     } catch (e) {
@@ -473,6 +629,29 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
+  }
+
+  void _hydrateControllersFromNote(NoteModel note) {
+    final hasLocalInput = _isDirty || _titleFocus.hasFocus || _contentFocus.hasFocus;
+    if (hasLocalInput) return;
+
+    final isFirstHydration = _lastHydratedNoteId != note.id;
+    final isNewerFromServer = _lastHydratedUpdatedAt == null ||
+        note.updatedAt.isAfter(_lastHydratedUpdatedAt!);
+
+    if (!isFirstHydration && !isNewerFromServer) return;
+
+    _titleCtrl.value = TextEditingValue(
+      text: note.title,
+      selection: TextSelection.collapsed(offset: note.title.length),
+    );
+    _contentCtrl.value = TextEditingValue(
+      text: note.content,
+      selection: TextSelection.collapsed(offset: note.content.length),
+    );
+
+    _lastHydratedNoteId = note.id;
+    _lastHydratedUpdatedAt = note.updatedAt;
   }
 
   Future<void> _reorderChecklistAdjusted(NoteModel note, int oldIndex, int newIndex) async {
@@ -500,12 +679,82 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
     await ref.read(noteDetailProvider(noteId).notifier).addChecklistItem(text.trim());
   }
 
-  Future<void> _pickAndUploadImage(String noteId) async {
-    final picker = ImagePicker();
-    final picked = await picker.pickImage(source: ImageSource.gallery);
-    if (picked == null) return;
+  Future<void> _pickAndUploadImages(String noteId) async {
+    final compressed = await _pickImageUploadMode();
+    if (compressed == null) return;
 
-    await ref.read(noteDetailProvider(noteId).notifier).uploadImage(picked.path);
+    final picker = ImagePicker();
+    final picked = await picker.pickMultiImage(
+      imageQuality: compressed ? 65 : null,
+    );
+    if (picked.isEmpty) return;
+
+    final selected = picked.length > 10 ? picked.sublist(0, 10) : picked;
+    if (picked.length > 10 && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Можно загрузить до 10 изображений за раз')),
+      );
+    }
+
+    setState(() => _uploadingImages = true);
+    var uploaded = 0;
+    var failed = 0;
+
+    for (final image in selected) {
+      try {
+        await ref.read(noteDetailProvider(noteId).notifier).uploadImage(image.path);
+        uploaded++;
+      } catch (_) {
+        failed++;
+      }
+    }
+
+    if (!mounted) return;
+    setState(() => _uploadingImages = false);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          failed == 0
+              ? 'Загружено изображений: $uploaded'
+              : 'Загружено: $uploaded, ошибок: $failed',
+        ),
+      ),
+    );
+  }
+
+  Future<bool?> _pickImageUploadMode() {
+    return showModalBottomSheet<bool>(
+      context: context,
+      showDragHandle: true,
+      useRootNavigator: true,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+              child: Text(
+                'Загрузка изображений',
+                style: Theme.of(ctx).textTheme.titleMedium,
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.compress_outlined),
+              title: const Text('Со сжатием'),
+              subtitle: const Text('Меньше размер, быстрее загрузка'),
+              onTap: () => Navigator.of(ctx).pop(true),
+            ),
+            ListTile(
+              leading: const Icon(Icons.image_outlined),
+              title: const Text('Без сжатия'),
+              subtitle: const Text('Оригинальное качество'),
+              onTap: () => Navigator.of(ctx).pop(false),
+            ),
+            const SizedBox(height: 12),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _moveNote(NoteModel note) async {
@@ -796,6 +1045,7 @@ class _ChecklistItemTile extends StatefulWidget {
   final int index;
   final ValueChanged<bool> onToggle;
   final VoidCallback onDelete;
+  final Future<void> Function(String text) onRename;
 
   const _ChecklistItemTile({
     super.key,
@@ -804,6 +1054,7 @@ class _ChecklistItemTile extends StatefulWidget {
     required this.index,
     required this.onToggle,
     required this.onDelete,
+    required this.onRename,
   });
 
   @override
@@ -821,10 +1072,16 @@ class _ChecklistItemTileState extends State<_ChecklistItemTile>
     TweenSequenceItem(tween: Tween(begin: 1.3, end: 0.9), weight: 30),
     TweenSequenceItem(tween: Tween(begin: 0.9, end: 1.0), weight: 30),
   ]).animate(CurvedAnimation(parent: _bounceCtrl, curve: Curves.easeOut));
+  late final TextEditingController _editCtrl =
+      TextEditingController(text: widget.item.text);
+  bool _editing = false;
 
   @override
   void didUpdateWidget(covariant _ChecklistItemTile old) {
     super.didUpdateWidget(old);
+    if (!_editing && old.item.text != widget.item.text) {
+      _editCtrl.text = widget.item.text;
+    }
     if (old.item.completed != widget.item.completed && widget.item.completed) {
       _bounceCtrl.forward(from: 0);
       HapticFeedback.lightImpact();
@@ -834,22 +1091,30 @@ class _ChecklistItemTileState extends State<_ChecklistItemTile>
   @override
   void dispose() {
     _bounceCtrl.dispose();
+    _editCtrl.dispose();
     super.dispose();
+  }
+
+  Future<void> _saveEdit() async {
+    final next = _editCtrl.text.trim();
+    if (next.isEmpty || next == widget.item.text) {
+      setState(() {
+        _editing = false;
+        _editCtrl.text = widget.item.text;
+      });
+      return;
+    }
+    await widget.onRename(next);
+    if (!mounted) return;
+    setState(() => _editing = false);
   }
 
   @override
   Widget build(BuildContext context) {
-    return Material(
+    final tile = Material(
       color: Colors.transparent,
       child: Row(
         children: [
-          ReorderableDragStartListener(
-            index: widget.index,
-            child: const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 4),
-              child: Icon(Icons.drag_handle, size: 20, color: AppColors.fgSoft),
-            ),
-          ),
           AnimatedBuilder(
             animation: _bounceAnim,
             builder: (context, child) => Transform.scale(
@@ -862,23 +1127,42 @@ class _ChecklistItemTileState extends State<_ChecklistItemTile>
             ),
           ),
           Expanded(
-            child: AnimatedDefaultTextStyle(
-              duration: const Duration(milliseconds: 300),
-              style: widget.item.completed
-                  ? TextStyle(
-                      decoration: TextDecoration.lineThrough,
-                      color: Theme.of(context)
-                          .colorScheme
-                          .onSurface
-                          .withValues(alpha: 0.5),
-                      fontSize: 14,
-                    )
-                  : TextStyle(
-                      color: Theme.of(context).colorScheme.onSurface,
-                      fontSize: 14,
+            child: _editing
+                ? TextField(
+                    controller: _editCtrl,
+                    autofocus: true,
+                    onSubmitted: (_) => _saveEdit(),
+                    onEditingComplete: _saveEdit,
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      border: InputBorder.none,
                     ),
-              child: Text(widget.item.text),
-            ),
+                  )
+                : GestureDetector(
+                    onDoubleTap: () {
+                      setState(() {
+                        _editing = true;
+                        _editCtrl.text = widget.item.text;
+                      });
+                    },
+                    child: AnimatedDefaultTextStyle(
+                      duration: const Duration(milliseconds: 300),
+                      style: widget.item.completed
+                          ? TextStyle(
+                              decoration: TextDecoration.lineThrough,
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onSurface
+                                  .withValues(alpha: 0.5),
+                              fontSize: 14,
+                            )
+                          : TextStyle(
+                              color: Theme.of(context).colorScheme.onSurface,
+                              fontSize: 14,
+                            ),
+                      child: Text(widget.item.text),
+                    ),
+                  ),
           ),
           IconButton(
             icon: const Icon(Icons.close, size: 16),
@@ -887,6 +1171,71 @@ class _ChecklistItemTileState extends State<_ChecklistItemTile>
           ),
         ],
       ),
+    );
+
+    if (_editing) return tile;
+
+    return _ChecklistLongPressDragStartListener(
+      index: widget.index,
+      child: tile,
+    );
+  }
+}
+
+class _ChecklistLongPressDragStartListener extends ReorderableDragStartListener {
+  const _ChecklistLongPressDragStartListener({
+    required super.index,
+    required super.child,
+  });
+
+  @override
+  MultiDragGestureRecognizer createRecognizer() {
+    return DelayedMultiDragGestureRecognizer(
+      delay: const Duration(milliseconds: 250),
+      debugOwner: this,
+    );
+  }
+}
+
+class _ResilientNoteImage extends StatefulWidget {
+  const _ResilientNoteImage({
+    required this.urls,
+    required this.fit,
+    required this.errorBuilder,
+  });
+
+  final List<String> urls;
+  final BoxFit fit;
+  final WidgetBuilder errorBuilder;
+
+  @override
+  State<_ResilientNoteImage> createState() => _ResilientNoteImageState();
+}
+
+class _ResilientNoteImageState extends State<_ResilientNoteImage> {
+  int _urlIndex = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.urls.isEmpty || _urlIndex >= widget.urls.length) {
+      return widget.errorBuilder(context);
+    }
+
+    return Image.network(
+      widget.urls[_urlIndex],
+      fit: widget.fit,
+      errorBuilder: (_, __, ___) {
+        if (_urlIndex + 1 < widget.urls.length) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            setState(() {
+              _urlIndex += 1;
+            });
+          });
+          return const SizedBox.shrink();
+        }
+        return widget.errorBuilder(context);
+      },
     );
   }
 }

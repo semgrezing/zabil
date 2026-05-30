@@ -16,6 +16,8 @@ class NoteCard extends StatefulWidget {
   final VoidCallback? onTogglePin;
   final ValueChanged<String?>? onColorChanged;
   final bool compactMode;
+  final bool highlightText;
+  final bool highlightChecklist;
 
   const NoteCard({
     super.key,
@@ -27,6 +29,8 @@ class NoteCard extends StatefulWidget {
     this.onTogglePin,
     this.onColorChanged,
     this.compactMode = false,
+    this.highlightText = false,
+    this.highlightChecklist = false,
   });
 
   @override
@@ -60,6 +64,10 @@ class _NoteCardState extends State<NoteCard> {
     return Dismissible(
       key: Key('note_dismiss_${note.id}'),
       direction: DismissDirection.horizontal,
+      dismissThresholds: const {
+        DismissDirection.startToEnd: 0.4,
+        DismissDirection.endToStart: 0.4,
+      },
       onUpdate: (details) {
         setState(() {
           _dragProgress = details.progress;
@@ -223,14 +231,24 @@ class _NoteCardState extends State<NoteCard> {
                 // Content
                 if (note.content.isNotEmpty) ...[
                   const SizedBox(height: AppSpacing.xs),
-                  Text(
-                    note.content,
-                    maxLines: widget.compactMode ? 3 : 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 13,
-                      color: AppColors.fgSoft,
-                      height: 1.5,
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 260),
+                    padding: EdgeInsets.zero,
+                    decoration: BoxDecoration(
+                      color: widget.highlightText
+                          ? AppColors.white.withValues(alpha: 0.08)
+                          : Colors.transparent,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(
+                      note.content,
+                      maxLines: widget.compactMode ? 3 : 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        color: AppColors.fgSoft,
+                        height: 1.5,
+                      ),
                     ),
                   ),
                 ],
@@ -247,9 +265,19 @@ class _NoteCardState extends State<NoteCard> {
                 // Checklist progress
                 if (totalItems > 0) ...[
                   const SizedBox(height: AppSpacing.md),
-                  _ChecklistProgress(
-                    completed: completedItems,
-                    total: totalItems,
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 260),
+                    padding: EdgeInsets.zero,
+                    decoration: BoxDecoration(
+                      color: widget.highlightChecklist
+                          ? AppColors.success.withValues(alpha: 0.12)
+                          : Colors.transparent,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: _ChecklistProgress(
+                      completed: completedItems,
+                      total: totalItems,
+                    ),
                   ),
                 ],
 
@@ -486,12 +514,13 @@ class _NoteImagesRow extends StatelessWidget {
             },
             child: ClipRRect(
               borderRadius: radius,
-              child: Image.network(
-                img.url,
+              child: SizedBox(
                 width: _imageHeight,
                 height: _imageHeight,
-                fit: BoxFit.cover,
-                errorBuilder: (context, _, __) => Container(
+                child: _ResilientNoteImage(
+                  urls: img.urlCandidates,
+                  fit: BoxFit.cover,
+                  errorBuilder: (context) => Container(
                   width: _imageHeight,
                   height: _imageHeight,
                   decoration: BoxDecoration(
@@ -504,6 +533,7 @@ class _NoteImagesRow extends StatelessWidget {
                     size: 18,
                     color: AppColors.fgSoft,
                   ),
+                ),
                 ),
               ),
             ),
@@ -526,6 +556,49 @@ class _NoteImagesRow extends StatelessWidget {
     }
 
     return row;
+  }
+}
+
+class _ResilientNoteImage extends StatefulWidget {
+  const _ResilientNoteImage({
+    required this.urls,
+    required this.fit,
+    required this.errorBuilder,
+  });
+
+  final List<String> urls;
+  final BoxFit fit;
+  final WidgetBuilder errorBuilder;
+
+  @override
+  State<_ResilientNoteImage> createState() => _ResilientNoteImageState();
+}
+
+class _ResilientNoteImageState extends State<_ResilientNoteImage> {
+  int _urlIndex = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.urls.isEmpty || _urlIndex >= widget.urls.length) {
+      return widget.errorBuilder(context);
+    }
+
+    return Image.network(
+      widget.urls[_urlIndex],
+      fit: widget.fit,
+      errorBuilder: (_, __, ___) {
+        if (_urlIndex + 1 < widget.urls.length) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            setState(() {
+              _urlIndex += 1;
+            });
+          });
+          return const SizedBox.shrink();
+        }
+        return widget.errorBuilder(context);
+      },
+    );
   }
 }
 

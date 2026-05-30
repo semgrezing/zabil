@@ -10,6 +10,7 @@ class ApiEndpoints {
   // Users
   static const String usersSearch = '/users/search';
   static const String userMe = '/users/me';
+  static String userPublicProfile(String id) => '/users/$id/profile';
   static const String userAvatar = '/users/me/avatar';
   static const String userAvatarHistory = '/users/me/avatar/history';
   static String userAvatarHistoryItem(String historyId) => '/users/me/avatar/history/$historyId';
@@ -30,6 +31,8 @@ class ApiEndpoints {
   // Invitations
   static const String invitations = '/invitations';
   static const String incomingInvitations = '/invitations/incoming';
+  static String groupPendingInvitations(String groupId) =>
+      '/invitations/group/$groupId/pending';
   static String acceptInvitation(String id) => '/invitations/$id/accept';
   static String declineInvitation(String id) => '/invitations/$id/decline';
 

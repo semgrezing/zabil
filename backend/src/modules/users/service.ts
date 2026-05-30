@@ -183,3 +183,57 @@ export async function deleteAvatarHistoryItem(
 
   return { deleted: true }
 }
+
+export async function getUserPublicProfile(
+  app: FastifyInstance,
+  requesterId: string,
+  targetUserId: string,
+) {
+  const user = await app.prisma.user.findUnique({
+    where: { id: targetUserId },
+    select: { id: true, username: true, displayName: true, avatarUrl: true },
+  })
+  if (!user) throw errors.notFound('Пользователь')
+
+  const commonMemberships = await app.prisma.groupMember.findMany({
+    where: {
+      userId: requesterId,
+      group: {
+        isPersonal: false,
+        members: {
+          some: { userId: targetUserId },
+        },
+      },
+    },
+    select: {
+      groupId: true,
+      group: {
+        select: {
+          id: true,
+          title: true,
+          avatarUrl: true,
+          members: { select: { userId: true } },
+        },
+      },
+    },
+    orderBy: { group: { title: 'asc' } },
+  })
+
+  const avatarHistory = await app.prisma.avatarHistory.findMany({
+    where: { entityType: 'user', entityId: targetUserId },
+    orderBy: { createdAt: 'desc' },
+    select: { id: true, avatarUrl: true, createdAt: true },
+    take: 30,
+  })
+
+  return {
+    user,
+    avatarHistory,
+    commonGroups: commonMemberships.map((m) => ({
+      id: m.group.id,
+      title: m.group.title,
+      avatarUrl: m.group.avatarUrl,
+      membersCount: m.group.members.length,
+    })),
+  }
+}

@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/auth_models.dart';
 import '../services/auth_service.dart';
+import '../../../core/api/api_client.dart';
 import '../../../core/auth/token_storage.dart';
 import '../../../core/notifications/notification_service.dart';
 
@@ -16,6 +17,7 @@ class AuthNotifier extends AsyncNotifier<AuthState> {
   Future<AuthState> build() async {
     final restored = await _service.restoreSession();
     if (restored?.isLoggedIn == true) {
+      ApiClient.markSessionActive();
       // ignore: unawaited_futures
       NotificationService.registerWithBackend();
     }
@@ -29,6 +31,7 @@ class AuthNotifier extends AsyncNotifier<AuthState> {
     );
     // После успешного входа регистрируем FCM-токен на бэке.
     if (state.valueOrNull?.isLoggedIn == true) {
+      ApiClient.markSessionActive();
       // fire-and-forget — не блокируем UI и не показываем ошибки.
       // ignore: unawaited_futures
       NotificationService.registerWithBackend();
@@ -41,6 +44,7 @@ class AuthNotifier extends AsyncNotifier<AuthState> {
       () => _service.register(username, password),
     );
     if (state.valueOrNull?.isLoggedIn == true) {
+      ApiClient.markSessionActive();
       // ignore: unawaited_futures
       NotificationService.registerWithBackend();
     }

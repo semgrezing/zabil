@@ -1,7 +1,7 @@
 name: collab_notes
 description: Collaborative Notes MVP
 publish_to: 'none'
-version: 1.15.0+18
+version: 1.16.0+19
 
 environment:
   sdk: '>=3.4.0 <4.0.0'
@@ -26,6 +26,7 @@ dependencies:
 
   # Image
   image_picker: ^1.1.2
+  pasteboard: ^0.2.0
   image_cropper: ^8.0.2
   cached_network_image: ^3.4.1
   flutter_svg: ^2.0.9

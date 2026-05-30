@@ -25,6 +25,26 @@ class PersonalMessageEvent extends WsEvent {
   const PersonalMessageEvent(this.data);
 }
 
+class ChatTypingEvent extends WsEvent {
+  final String kind; // 'group' | 'personal'
+  final Map<String, dynamic> data;
+  const ChatTypingEvent({required this.kind, required this.data});
+}
+
+class PersonalReadReceiptEvent extends WsEvent {
+  final String readerId;
+  final String peerUserId;
+  final List<String> messageIds;
+  final DateTime readAt;
+
+  const PersonalReadReceiptEvent({
+    required this.readerId,
+    required this.peerUserId,
+    required this.messageIds,
+    required this.readAt,
+  });
+}
+
 class PushNotificationEvent extends WsEvent {
   final String title;
   final String body;
@@ -146,6 +166,22 @@ class WsClient {
           noteId: json['noteId'] as String,
           userId: json['userId'] as String,
         ));
+      } else if (type == 'chat_typing') {
+        _eventsController.add(ChatTypingEvent(
+          kind: json['kind'] as String? ?? '',
+          data: (json['data'] as Map?)?.cast<String, dynamic>() ?? const {},
+        ));
+      } else if (type == 'read_receipt' && json['kind'] == 'personal') {
+        final data = (json['data'] as Map?)?.cast<String, dynamic>() ?? const {};
+        _eventsController.add(PersonalReadReceiptEvent(
+          readerId: data['readerId']?.toString() ?? '',
+          peerUserId: data['peerUserId']?.toString() ?? '',
+          messageIds: ((data['messageIds'] as List?) ?? const [])
+              .map((e) => e.toString())
+              .toList(),
+          readAt: DateTime.tryParse(data['readAt']?.toString() ?? '') ??
+              DateTime.now(),
+        ));
       }
     } catch (e) {
       debugPrint('[ws] parse error: $e');
@@ -181,6 +217,14 @@ class WsClient {
   /// Сообщает серверу, что пользователь печатает в заметке.
   void sendTyping(String noteId) {
     _send({'type': 'typing', 'noteId': noteId});
+  }
+
+  void sendChatTypingGroup(String groupId) {
+    _send({'type': 'chat_typing', 'kind': 'group', 'groupId': groupId});
+  }
+
+  void sendChatTypingPersonal(String userId) {
+    _send({'type': 'chat_typing', 'kind': 'personal', 'userId': userId});
   }
 
   void _send(Map<String, dynamic> data) {

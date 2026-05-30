@@ -9,7 +9,10 @@ import {
 } from './schema.js'
 import { errors } from '../../utils/errors.js'
 import { requireGroupMember } from '../../middleware/auth.js'
-import { notifyNewNote, notifyNoteUpdated } from '../notifications/service.js'
+import {
+  notifyNewNote,
+  notifyNoteUpdated,
+} from '../notifications/service.js'
 
 async function ensurePersonalGroup(app: FastifyInstance, userId: string) {
   const existing = await app.prisma.group.findFirst({
@@ -287,20 +290,6 @@ export async function addChecklistItem(app: FastifyInstance, noteId: string, use
     data: { noteId, text: dto.text, position },
   })
 
-  if (!note.group.isPersonal) {
-    notifyNoteUpdated(
-      app,
-      {
-        noteId: note.id,
-        groupId: note.groupId,
-        updatedBy: userId,
-        title: note.title,
-        reason: 'checklist',
-      },
-      note.group.title,
-    ).catch((e: unknown) => console.error('[notify] notifyNoteUpdated(checklist/add):', e))
-  }
-
   return item
 }
 
@@ -325,20 +314,6 @@ export async function updateChecklistItem(
     data: dto,
   })
 
-  if (!note.group.isPersonal) {
-    notifyNoteUpdated(
-      app,
-      {
-        noteId: note.id,
-        groupId: note.groupId,
-        updatedBy: userId,
-        title: note.title,
-        reason: 'checklist',
-      },
-      note.group.title,
-    ).catch((e: unknown) => console.error('[notify] notifyNoteUpdated(checklist/update):', e))
-  }
-
   return item
 }
 
@@ -353,20 +328,6 @@ export async function deleteChecklistItem(app: FastifyInstance, noteId: string, 
   if (!isMember) throw errors.forbidden()
 
   await app.prisma.noteChecklistItem.delete({ where: { id: itemId } })
-
-  if (!note.group.isPersonal) {
-    notifyNoteUpdated(
-      app,
-      {
-        noteId: note.id,
-        groupId: note.groupId,
-        updatedBy: userId,
-        title: note.title,
-        reason: 'checklist',
-      },
-      note.group.title,
-    ).catch((e: unknown) => console.error('[notify] notifyNoteUpdated(checklist/delete):', e))
-  }
 
   return { success: true }
 }

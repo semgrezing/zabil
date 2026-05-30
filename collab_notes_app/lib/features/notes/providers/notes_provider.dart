@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/note_model.dart';
 import '../services/notes_service.dart';
 import '../../auth/providers/auth_provider.dart';
+import '../../../core/realtime/ws_client.dart';
 
 final notesServiceProvider = Provider<NotesService>((ref) => NotesService());
 const _unset = Object();
@@ -37,6 +38,9 @@ class NotesFilter {
 }
 
 final notesFilterProvider = StateProvider<NotesFilter>((ref) => const NotesFilter());
+final notesRealtimeBannerProvider = StateProvider<bool>((ref) => false);
+final notesTextHighlightProvider = StateProvider<Set<String>>((ref) => <String>{});
+final notesChecklistHighlightProvider = StateProvider<Set<String>>((ref) => <String>{});
 
 final notesProvider = AsyncNotifierProvider<NotesNotifier, List<NoteModel>>(
   NotesNotifier.new,
@@ -48,6 +52,9 @@ class NotesNotifier extends AsyncNotifier<List<NoteModel>> {
   final Map<String, List<NoteModel>> _queryCache = {};
   final Map<String, List<NoteModel>> _contextCache = {};
   Timer? _searchDebounce;
+  Timer? _realtimeRefreshDebounce;
+  StreamSubscription? _wsSub;
+  final Map<String, Timer> _highlightTimers = {};
   bool _disposeHookRegistered = false;
 
   String _normalizeSearch(String? search) => search?.trim().toLowerCase() ?? '';
@@ -125,8 +132,60 @@ class NotesNotifier extends AsyncNotifier<List<NoteModel>> {
       _disposeHookRegistered = true;
       ref.onDispose(() {
         _searchDebounce?.cancel();
+        _realtimeRefreshDebounce?.cancel();
+        _wsSub?.cancel();
+        for (final timer in _highlightTimers.values) {
+          timer.cancel();
+        }
+        _highlightTimers.clear();
       });
     }
+
+    _wsSub ??= ref.read(wsClientProvider).events.listen((event) {
+      if (event is! PushNotificationEvent) return;
+      final type = event.data['type']?.toString();
+      if (type != 'new_note' && type != 'note_updated') {
+        return;
+      }
+
+      final noteId = event.data['noteId']?.toString();
+      if (noteId != null && noteId.isNotEmpty) {
+        if (type == 'note_updated' || type == 'new_note') {
+          final current = ref.read(notesTextHighlightProvider);
+          ref.read(notesTextHighlightProvider.notifier).state = {
+            ...current,
+            noteId,
+          };
+        }
+        _highlightTimers[noteId]?.cancel();
+        _highlightTimers[noteId] = Timer(const Duration(seconds: 8), () {
+          final textSet = {...ref.read(notesTextHighlightProvider)};
+          textSet.remove(noteId);
+          ref.read(notesTextHighlightProvider.notifier).state = textSet;
+
+          final checklistSet = {...ref.read(notesChecklistHighlightProvider)};
+          checklistSet.remove(noteId);
+          ref.read(notesChecklistHighlightProvider.notifier).state = checklistSet;
+          _highlightTimers.remove(noteId);
+        });
+      }
+
+      final filter = ref.read(notesFilterProvider);
+      final hasFilterContext =
+          _normalizeSearch(filter.search).isNotEmpty ||
+          filter.groupId != null ||
+          filter.personal ||
+          filter.showArchived;
+
+      if (hasFilterContext) {
+        ref.read(notesRealtimeBannerProvider.notifier).state = true;
+        return;
+      }
+
+      _realtimeRefreshDebounce?.cancel();
+      _realtimeRefreshDebounce =
+          Timer(const Duration(milliseconds: 500), refresh);
+    });
 
     _clearCaches();
     final filter = ref.watch(notesFilterProvider);
@@ -201,6 +260,7 @@ class NotesNotifier extends AsyncNotifier<List<NoteModel>> {
         _contextCache[contextKey] = current;
       }
     }
+    ref.read(notesRealtimeBannerProvider.notifier).state = false;
   }
 
   Future<NoteModel> createNote({
@@ -275,6 +335,19 @@ class NotesNotifier extends AsyncNotifier<List<NoteModel>> {
     await refresh();
   }
 
+  void markNoteAsViewed(String noteId) {
+    _highlightTimers[noteId]?.cancel();
+    _highlightTimers.remove(noteId);
+
+    final textSet = {...ref.read(notesTextHighlightProvider)};
+    textSet.remove(noteId);
+    ref.read(notesTextHighlightProvider.notifier).state = textSet;
+
+    final checklistSet = {...ref.read(notesChecklistHighlightProvider)};
+    checklistSet.remove(noteId);
+    ref.read(notesChecklistHighlightProvider.notifier).state = checklistSet;
+  }
+
 }
 
 // Single note provider
@@ -345,6 +418,30 @@ class NoteDetailNotifier extends FamilyAsyncNotifier<NoteModel, String> {
     );
   }
 
+  Future<void> updateChecklistItemText(String itemId, String text) async {
+    final updated = await _service.updateChecklistItem(arg, itemId, text: text);
+    state = state.whenData(
+      (note) => NoteModel(
+        id: note.id,
+        groupId: note.groupId,
+        groupTitle: note.groupTitle,
+        isPersonal: note.isPersonal,
+        title: note.title,
+        content: note.content,
+        colorLabel: note.colorLabel,
+        archived: note.archived,
+        pinned: note.pinned,
+        createdAt: note.createdAt,
+        updatedAt: note.updatedAt,
+        creator: note.creator,
+        checklistItems: note.checklistItems
+            .map((i) => i.id == itemId ? updated : i)
+            .toList(),
+        images: note.images,
+      ),
+    );
+  }
+
   Future<void> deleteChecklistItem(String itemId) async {
     await _service.deleteChecklistItem(arg, itemId);
     state = state.whenData(
@@ -409,6 +506,34 @@ class NoteDetailNotifier extends FamilyAsyncNotifier<NoteModel, String> {
         images: [...note.images, image],
       ),
     );
+  }
+
+  void applyLocalTextEdits({
+    required String title,
+    required String content,
+  }) {
+    state = state.whenData(
+      (note) => NoteModel(
+        id: note.id,
+        groupId: note.groupId,
+        groupTitle: note.groupTitle,
+        isPersonal: note.isPersonal,
+        title: title,
+        content: content,
+        colorLabel: note.colorLabel,
+        archived: note.archived,
+        pinned: note.pinned,
+        createdAt: note.createdAt,
+        updatedAt: DateTime.now(),
+        creator: note.creator,
+        checklistItems: note.checklistItems,
+        images: note.images,
+      ),
+    );
+  }
+
+  void applyRemoteSnapshot(NoteModel remote) {
+    state = AsyncData(remote);
   }
 
   Future<void> deleteImage(String imageId) async {

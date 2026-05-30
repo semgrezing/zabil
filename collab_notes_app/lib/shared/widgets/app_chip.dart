@@ -20,6 +20,7 @@ class AppChip extends StatelessWidget {
   final VoidCallback? onPressed;
   final AppChipSize size;
   final Widget? leading;
+  final Color? inactiveBackgroundColor;
 
   const AppChip({
     super.key,
@@ -28,6 +29,7 @@ class AppChip extends StatelessWidget {
     this.onPressed,
     this.size = AppChipSize.s,
     this.leading,
+    this.inactiveBackgroundColor,
   });
 
   @override
@@ -40,7 +42,7 @@ class AppChip extends StatelessWidget {
     );
     final bg = selected
         ? AppColors.white
-        : AppColors.surfaceGlass;
+      : (inactiveBackgroundColor ?? AppColors.surfaceGlass);
     final hoverBg = selected
         ? AppColors.whiteHover
         : AppColors.bg2;

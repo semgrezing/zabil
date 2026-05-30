@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'core/notifications/notification_service.dart';
 import 'router.dart';
@@ -36,6 +37,9 @@ class CollabNotesApp extends ConsumerWidget {
         themeMode: themeMode,
         theme: AppTheme.light,
         darkTheme: AppTheme.dark,
+        builder: (context, child) => AppExitGuard(
+          child: child ?? const SizedBox.shrink(),
+        ),
         home: ForceUpdateScreen(info: info),
       );
     }
@@ -47,7 +51,66 @@ class CollabNotesApp extends ConsumerWidget {
       themeMode: themeMode,
       theme: AppTheme.light,
       darkTheme: AppTheme.dark,
+      builder: (context, child) => AppExitGuard(
+        child: child ?? const SizedBox.shrink(),
+      ),
       routerConfig: router,
+    );
+  }
+}
+
+class AppExitGuard extends StatefulWidget {
+  final Widget child;
+
+  const AppExitGuard({super.key, required this.child});
+
+  @override
+  State<AppExitGuard> createState() => _AppExitGuardState();
+}
+
+class _AppExitGuardState extends State<AppExitGuard> {
+  static const _confirmWindow = Duration(seconds: 3);
+
+  DateTime? _lastBackRequestAt;
+
+  Future<void> _handleBack() async {
+    final navigator = Navigator.maybeOf(context);
+    if (navigator != null) {
+      final hasBackStack = navigator.canPop();
+      final didPop = await navigator.maybePop();
+      if (didPop || hasBackStack) return;
+    }
+
+    final now = DateTime.now();
+    final withinWindow = _lastBackRequestAt != null &&
+        now.difference(_lastBackRequestAt!) <= _confirmWindow;
+
+    if (withinWindow) {
+      SystemNavigator.pop();
+      return;
+    }
+
+    _lastBackRequestAt = now;
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.clearSnackBars();
+    messenger.showSnackBar(
+      const SnackBar(
+        content: Text('Еще раз, чтобы выйти'),
+        duration: _confirmWindow,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        _handleBack();
+      },
+      child: widget.child,
     );
   }
 }
