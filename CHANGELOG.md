@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.22.0] — 2026-05-31
+
+### Added
+- **Telegram OAuth**: авторизация через Telegram (бот + deep link).
+- **Chat UX**: профили пользователей в чатах, индикатор набора текста, улучшенный просмотр изображений.
+- **WebSocket Hub**: централизованный real-time hub для чатов с typing-индикаторами и presence.
+- **Группы**: расширенное управление — роли, приглашения с истечением, pending invitations.
+- **Заметки**: presence bar (кто сейчас редактирует), улучшенный редактор с drag-and-drop изображений.
+
+### Security
+- JWT-валидация ужесточена, rate limiting на auth-эндпоинтах.
+- Санитизация входных данных для предотвращения XSS/injection.
+
+### Backend
+- Миграции: `last_seen_at`, `telegram_id`, `pending_invitations`, `chat_user_profiles`.
+- Оптимизация сервисов чатов, групп, уведомлений.
+
 ## [1.21.0] — 2026-05-31
 
 ### Added

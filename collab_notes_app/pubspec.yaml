@@ -1,7 +1,7 @@
 name: collab_notes
 description: Collaborative Notes MVP
 publish_to: 'none'
-version: 1.21.0+21
+version: 1.22.0+22
 
 environment:
   sdk: '>=3.4.0 <4.0.0'
