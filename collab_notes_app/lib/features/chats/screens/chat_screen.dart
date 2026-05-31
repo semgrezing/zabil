@@ -59,6 +59,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   final _composerFocusNode = FocusNode();
   final _scrollCtrl = ScrollController();
   bool _sending = false;
+  bool _showScrollToBottom = false;
   StreamSubscription<WsEvent>? _wsSub;
   GroupModel? _groupMeta;
   final Map<String, _TypingUser> _typingUsers = {};
@@ -96,6 +97,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   @override
   void initState() {
     super.initState();
+    _scrollCtrl.addListener(_onScroll);
     _subscribeWsEvents();
     _loadGroupMeta();
     // Mark-as-read и загрузка профиля для личного чата при открытии
@@ -220,6 +222,24 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     setState(() {
       _typingUsers[userId] = _TypingUser(name: name, timer: timer);
     });
+  }
+
+  void _onScroll() {
+    // In a reverse list, offset 0 = bottom (newest messages).
+    // Show button when scrolled more than ~200px away from the bottom.
+    final show = _scrollCtrl.hasClients && _scrollCtrl.offset > 200;
+    if (show != _showScrollToBottom) {
+      setState(() => _showScrollToBottom = show);
+    }
+  }
+
+  void _scrollToBottom() {
+    if (!_scrollCtrl.hasClients) return;
+    _scrollCtrl.animateTo(
+      0,
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeOut,
+    );
   }
 
   Future<void> _openSystemEmojiKeyboard() async {
@@ -489,6 +509,29 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                 ],
               ),
             ),
+            // Scroll-to-bottom FAB
+            if (_showScrollToBottom)
+              Positioned(
+                right: 16,
+                bottom: 100,
+                child: Material(
+                  color: AppColors.bg2,
+                  shape: const CircleBorder(),
+                  elevation: 4,
+                  child: InkWell(
+                    customBorder: const CircleBorder(),
+                    onTap: _scrollToBottom,
+                    child: const Padding(
+                      padding: EdgeInsets.all(10),
+                      child: Icon(
+                        Icons.keyboard_arrow_down_rounded,
+                        color: AppColors.white,
+                        size: 24,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
           ],
         ),
       ),
