@@ -103,6 +103,25 @@ class WsReconnectedEvent extends WsEvent {
   const WsReconnectedEvent();
 }
 
+class NotePresenceEvent extends WsEvent {
+  final String noteId;
+  final String userId;
+  final String displayName;
+  final String action; // 'join' | 'leave' | 'viewers'
+  const NotePresenceEvent({
+    required this.noteId,
+    required this.userId,
+    required this.displayName,
+    required this.action,
+  });
+}
+
+class NoteTypingEvent extends WsEvent {
+  final String noteId;
+  final String userId;
+  const NoteTypingEvent({required this.noteId, required this.userId});
+}
+
 /// WebSocket-клиент с auto-reconnect.
 ///
 /// Подключается на auth (есть валидный access token), переподключается при

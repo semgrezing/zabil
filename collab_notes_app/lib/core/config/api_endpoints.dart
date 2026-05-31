@@ -67,4 +67,5 @@ class ApiEndpoints {
   static String personalMessages(String userId) => '/chats/personal/$userId/messages';
   static String deletePersonalMessage(String userId, String messageId) => '/chats/personal/$userId/messages/$messageId';
   static String personalMarkRead(String userId) => '/chats/personal/$userId/read';
+  static String groupMarkRead(String groupId) => '/chats/groups/$groupId/read';
 }

@@ -386,7 +386,7 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
                       if (confirmed == true && context.mounted) {
                         try {
                           await ref
-                              .read(noteEditorProvider(note.id).notifier)
+                              .read(noteDetailProvider(note.id).notifier)
                               .deleteImage(image.id);
                         } catch (e) {
                           if (context.mounted) {
