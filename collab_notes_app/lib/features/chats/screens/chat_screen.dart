@@ -22,6 +22,7 @@ import '../../../shared/widgets/app_loader.dart';
 import '../../../shared/widgets/typing_indicator.dart';
 import '../models/chat_message.dart';
 import '../models/chat_user_profile.dart';
+import '../../../core/utils/error_mapper.dart';
 import '../providers/chats_provider.dart';
 import 'chat_image_viewer_screen.dart';
 import 'chat_user_profile_screen.dart';
@@ -276,7 +277,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       }
     } catch (e) {
       messenger.showSnackBar(
-        SnackBar(content: Text('Не удалось отправить: $e')),
+        SnackBar(content: Text('Не удалось отправить: ${mapError(e)}')),
       );
     } finally {
       if (mounted) setState(() => _sending = false);
@@ -334,7 +335,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Не удалось отправить изображения: $e')),
+        SnackBar(content: Text('Не удалось отправить изображения: ${mapError(e)}')),
       );
     } finally {
       if (mounted) setState(() => _sending = false);
@@ -360,7 +361,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       } catch (e) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Не удалось удалить: $e')),
+            SnackBar(content: Text('Не удалось удалить: ${mapError(e)}')),
           );
         }
       }
@@ -386,7 +387,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       } catch (e) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Не удалось удалить: $e')),
+            SnackBar(content: Text('Не удалось удалить: ${mapError(e)}')),
           );
         }
       }
@@ -604,7 +605,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         _scrollCtrl.animateTo(0, duration: const Duration(milliseconds: 200), curve: Curves.easeOut);
       }
     } catch (e) {
-      messenger.showSnackBar(SnackBar(content: Text('Не удалось отправить изображение: $e')));
+      messenger.showSnackBar(SnackBar(content: Text('Не удалось отправить изображение: ${mapError(e)}')));
     } finally {
       if (mounted) setState(() => _sending = false);
     }
@@ -638,14 +639,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       final async = ref.watch(groupChatProvider(key));
       return async.when(
         loading: () => const AppLoader(),
-        error: (e, _) => Center(child: Text('Ошибка загрузки: $e')),
+        error: (e, _) => Center(child: Text(mapError(e))),
         data: (messages) => _renderGroup(context, messages, currentUserId),
       );
     } else {
       final async = ref.watch(personalChatProvider(widget.userId!));
       return async.when(
         loading: () => const AppLoader(),
-        error: (e, _) => Center(child: Text('Ошибка загрузки: $e')),
+        error: (e, _) => Center(child: Text(mapError(e))),
         data: (messages) => _renderPersonal(context, messages, currentUserId),
       );
     }

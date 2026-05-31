@@ -18,6 +18,7 @@ import '../../../shared/widgets/note_presence_bar.dart';
 import '../../../core/realtime/ws_client.dart';
 import '../../../features/groups/providers/groups_provider.dart';
 import 'image_viewer_screen.dart';
+import '../../../core/utils/error_mapper.dart';
 
 class NoteEditorScreen extends ConsumerStatefulWidget {
   final String? noteId;
@@ -170,7 +171,7 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
       loading: () => const Scaffold(body: AppLoader()),
       error: (err, _) => Scaffold(
         appBar: AppBar(),
-        body: Center(child: Text('Ошибка: $err')),
+        body: Center(child: Text(mapError(err))),
       ),
       data: (note) => _buildEditor(note),
     );
@@ -390,7 +391,7 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
                         } catch (e) {
                           if (context.mounted) {
                             ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text('Не удалось удалить: $e')),
+                              SnackBar(content: Text('Не удалось удалить: ${mapError(e)}')),
                             );
                           }
                         }
@@ -822,7 +823,7 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Не удалось сохранить: $e')),
+          SnackBar(content: Text('Не удалось сохранить: ${mapError(e)}')),
         );
       }
     } finally {
@@ -1125,7 +1126,7 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Не удалось перенести заметку: $e')),
+        SnackBar(content: Text('Не удалось перенести: ${mapError(e)}')),
       );
     }
   }
@@ -1196,7 +1197,7 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Не удалось обновить цвет: $e')),
+        SnackBar(content: Text('Не удалось обновить цвет: ${mapError(e)}')),
       );
     }
   }
@@ -1390,7 +1391,7 @@ class _NewNoteEditorState extends ConsumerState<_NewNoteEditor> {
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Ошибка: $e')),
+          SnackBar(content: Text(mapError(e))),
         );
       }
     } finally {

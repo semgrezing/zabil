@@ -42,6 +42,22 @@ final notesRealtimeBannerProvider = StateProvider<bool>((ref) => false);
 final notesTextHighlightProvider = StateProvider<Set<String>>((ref) => <String>{});
 final notesChecklistHighlightProvider = StateProvider<Set<String>>((ref) => <String>{});
 
+/// Counts of notes per group/personal context, loaded once for chip badges.
+/// Returns a map: 'personal' -> count, groupId -> count, 'all' -> total.
+final notesCountsProvider = FutureProvider<Map<String, int>>((ref) async {
+  final service = ref.read(notesServiceProvider);
+  final allNotes = await service.getNotes();
+  final counts = <String, int>{'all': allNotes.length};
+  for (final note in allNotes) {
+    if (note.isPersonal) {
+      counts['personal'] = (counts['personal'] ?? 0) + 1;
+    } else if (note.groupId != null) {
+      counts[note.groupId!] = (counts[note.groupId!] ?? 0) + 1;
+    }
+  }
+  return counts;
+});
+
 final notesProvider = AsyncNotifierProvider<NotesNotifier, List<NoteModel>>(
   NotesNotifier.new,
 );

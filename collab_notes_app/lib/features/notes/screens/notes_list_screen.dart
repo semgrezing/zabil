@@ -12,6 +12,7 @@ import '../../../shared/theme/app_colors.dart';
 import '../../../shared/theme/app_dimensions.dart';
 import '../../../features/groups/providers/groups_provider.dart';
 import '../../../shared/widgets/app_chip.dart';
+import '../../../core/utils/error_mapper.dart';
 
 class NotesListScreen extends ConsumerStatefulWidget {
   const NotesListScreen({super.key});
@@ -130,6 +131,7 @@ class _NotesListScreenState extends ConsumerState<NotesListScreen> {
     final notesAsync = ref.watch(notesProvider);
     final groupsAsync = ref.watch(groupsProvider);
     final groups = groupsAsync.valueOrNull ?? [];
+    final notesCounts = ref.watch(notesCountsProvider).valueOrNull ?? {};
 
     return Scaffold(
       appBar: AppBar(
@@ -234,7 +236,9 @@ class _NotesListScreenState extends ConsumerState<NotesListScreen> {
                           Padding(
                             padding: const EdgeInsets.only(right: 8),
                             child: AppChip(
-                              label: 'Все',
+                              label: notesCounts.containsKey('all')
+                                  ? 'Все (${notesCounts['all']})'
+                                  : 'Все',
                               selected:
                                   filter.groupId == null && !filter.personal,
                                 inactiveBackgroundColor: const Color(0xFF1A1A1A),
@@ -249,7 +253,9 @@ class _NotesListScreenState extends ConsumerState<NotesListScreen> {
                           Padding(
                             padding: const EdgeInsets.only(right: 8),
                             child: AppChip(
-                              label: 'Личное',
+                              label: notesCounts.containsKey('personal')
+                                  ? 'Личное (${notesCounts['personal']})'
+                                  : 'Личное',
                               selected: filter.personal,
                                 inactiveBackgroundColor: const Color(0xFF1A1A1A),
                               onPressed: () => ref
@@ -261,21 +267,26 @@ class _NotesListScreenState extends ConsumerState<NotesListScreen> {
                             ),
                           ),
                           ...groups.map(
-                            (g) => Padding(
-                              padding: const EdgeInsets.only(right: 8),
-                              child: AppChip(
-                                label: g.title,
-                                selected: filter.groupId == g.id &&
-                                    !filter.personal,
-                                inactiveBackgroundColor: const Color(0xFF1A1A1A),
-                                onPressed: () => ref
-                                    .read(notesFilterProvider.notifier)
-                                    .update(
-                                      (s) => s.copyWith(
-                                          groupId: g.id, personal: false),
-                                    ),
-                              ),
-                            ),
+                            (g) {
+                              final count = notesCounts[g.id];
+                              return Padding(
+                                padding: const EdgeInsets.only(right: 8),
+                                child: AppChip(
+                                  label: count != null
+                                      ? '${g.title} ($count)'
+                                      : g.title,
+                                  selected: filter.groupId == g.id &&
+                                      !filter.personal,
+                                  inactiveBackgroundColor: const Color(0xFF1A1A1A),
+                                  onPressed: () => ref
+                                      .read(notesFilterProvider.notifier)
+                                      .update(
+                                        (s) => s.copyWith(
+                                            groupId: g.id, personal: false),
+                                      ),
+                                ),
+                              );
+                            },
                           ),
                         ],
                       ),
@@ -332,7 +343,7 @@ class _NotesListScreenState extends ConsumerState<NotesListScreen> {
             child: notesAsync.when(
               loading: () => const _NotesListSkeleton(),
               error: (err, _) => Center(
-                child: Text('Ошибка загрузки: $err'),
+                child: Text(mapError(err)),
               ),
               data: (notes) {
                 if (notes.isEmpty) {
@@ -395,6 +406,9 @@ class _NotesListScreenState extends ConsumerState<NotesListScreen> {
                                 : constraints.maxWidth >= 800
                                     ? 3
                                     : 2;
+                            // A9: MasonryGridView.count already provides true masonry layout:
+                            // each card sizes to its content (MainAxisSize.min in NoteCard),
+                            // no mainAxisExtent is set, so cards don't stretch to row max height.
                             return MasonryGridView.count(
                               key: const PageStorageKey('notes_grid'),
                               padding: const EdgeInsets.fromLTRB(12, 4, 12, 80),
@@ -533,7 +547,7 @@ class _NotesListScreenState extends ConsumerState<NotesListScreen> {
     } catch (e) {
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Не удалось архивировать: $e')),
+        SnackBar(content: Text('Не удалось архивировать: ${mapError(e)}')),
       );
     }
   }
@@ -545,7 +559,7 @@ class _NotesListScreenState extends ConsumerState<NotesListScreen> {
     } catch (e) {
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Не удалось закрепить: $e')),
+        SnackBar(content: Text('Не удалось закрепить: ${mapError(e)}')),
       );
     }
   }
@@ -603,7 +617,7 @@ class _NotesListScreenState extends ConsumerState<NotesListScreen> {
     } catch (e) {
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Не удалось перенести заметку: $e')),
+        SnackBar(content: Text('Не удалось перенести: ${mapError(e)}')),
       );
     }
   }
@@ -622,7 +636,7 @@ class _NotesListScreenState extends ConsumerState<NotesListScreen> {
     } catch (e) {
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Не удалось обновить цвет: $e')),
+        SnackBar(content: Text('Не удалось обновить цвет: ${mapError(e)}')),
       );
     }
   }
