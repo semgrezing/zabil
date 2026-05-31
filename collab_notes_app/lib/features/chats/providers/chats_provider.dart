@@ -25,11 +25,18 @@ class PersonalConversationsNotifier
   Future<List<PersonalChatPreview>> build() async {
     _wsSub?.cancel();
     final ws = ref.read(wsClientProvider);
+    final myUserId = ref.read(authStateProvider).valueOrNull?.user?.id;
     _wsSub = ws.events.listen((event) {
-      if (event is PersonalMessageEvent ||
-          event is PersonalReadReceiptEvent ||
-          event is WsReconnectedEvent) {
+      if (event is WsReconnectedEvent) {
         refresh();
+        return;
+      }
+      if (event is PersonalMessageEvent) {
+        _applyPersonalMessageEvent(event.data, myUserId);
+        return;
+      }
+      if (event is PersonalReadReceiptEvent) {
+        _applyPersonalReadReceiptEvent(event, myUserId);
         return;
       }
       if (event is UserOnlineStatusEvent) {
@@ -52,6 +59,92 @@ class PersonalConversationsNotifier
       _wsSub = null;
     });
     return _service.getPersonalConversations();
+  }
+
+  void _applyPersonalMessageEvent(
+    Map<String, dynamic> data,
+    String? myUserId,
+  ) {
+    if (myUserId == null || myUserId.isEmpty) {
+      refresh();
+      return;
+    }
+
+    try {
+      final message = PersonalChatMessage.fromJson(data);
+      final partnerId = message.senderId == myUserId
+          ? message.receiverId
+          : message.senderId;
+      if (partnerId.isEmpty) return;
+
+      final currentItems = state.valueOrNull;
+      if (currentItems == null) {
+        refresh();
+        return;
+      }
+
+      final index = currentItems.indexWhere((item) => item.user['id'] == partnerId);
+      if (index < 0) {
+        refresh();
+        return;
+      }
+
+      final item = currentItems[index];
+      final unreadCount = message.senderId == myUserId ? item.unreadCount : item.unreadCount + 1;
+      final updated = item.copyWith(
+        lastMessage: message,
+        unreadCount: unreadCount,
+      );
+
+      final next = [...currentItems];
+      next.removeAt(index);
+      next.insert(0, updated);
+      state = AsyncData(next);
+    } catch (_) {
+      refresh();
+    }
+  }
+
+  void _applyPersonalReadReceiptEvent(
+    PersonalReadReceiptEvent event,
+    String? myUserId,
+  ) {
+    if (myUserId == null || myUserId.isEmpty) {
+      refresh();
+      return;
+    }
+
+    final currentItems = state.valueOrNull;
+    if (currentItems == null) {
+      refresh();
+      return;
+    }
+
+    final partnerId = event.readerId == myUserId ? event.peerUserId : event.readerId;
+    if (partnerId.isEmpty) return;
+
+    final index = currentItems.indexWhere((item) => item.user['id'] == partnerId);
+    if (index < 0) {
+      refresh();
+      return;
+    }
+
+    final item = currentItems[index];
+    final unreadCount = event.readerId == myUserId ? 0 : item.unreadCount;
+    final shouldMarkRead =
+        event.peerUserId == myUserId && item.lastMessage.senderId == myUserId &&
+        event.messageIds.contains(item.lastMessage.id);
+
+    final updated = item.copyWith(
+      unreadCount: unreadCount,
+      lastMessage: shouldMarkRead
+          ? item.lastMessage.copyWith(readAt: event.readAt)
+          : item.lastMessage,
+    );
+
+    final next = [...currentItems];
+    next[index] = updated;
+    state = AsyncData(next);
   }
 
   Future<void> refresh() async {

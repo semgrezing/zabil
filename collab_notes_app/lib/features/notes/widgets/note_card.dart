@@ -287,6 +287,8 @@ class _NoteCardState extends State<NoteCard> {
                   children: [
                     Expanded(
                       child: _UpdatedByRow(
+                        groupTitle: note.groupTitle,
+                        isPersonal: note.isPersonal,
                         creator: note.creator,
                         updatedAt: note.updatedAt,
                       ),
@@ -658,10 +660,14 @@ class _ChecklistProgress extends StatelessWidget {
 // ─── Updated By Row ───────────────────────────────────────────────────────────
 
 class _UpdatedByRow extends StatelessWidget {
+  final String? groupTitle;
+  final bool isPersonal;
   final Map<String, String> creator;
   final DateTime updatedAt;
 
   const _UpdatedByRow({
+    required this.groupTitle,
+    required this.isPersonal,
     required this.creator,
     required this.updatedAt,
   });
@@ -670,9 +676,12 @@ class _UpdatedByRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final name = creator['displayName'] ?? creator['username'] ?? '';
     final relativeTime = _formatRelativeTime(updatedAt);
+    final groupPart = !isPersonal && (groupTitle?.trim().isNotEmpty ?? false)
+        ? '#${groupTitle!.trim()}, '
+        : '';
 
     return Text(
-      '$name, $relativeTime',
+      '$groupPart$name, $relativeTime',
       style: const TextStyle(
         fontSize: 11,
         color: AppColors.fgSoft,

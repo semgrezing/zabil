@@ -96,10 +96,19 @@ class NotesService {
     return response.data as Map<String, dynamic>;
   }
 
-  Future<ChecklistItem> addChecklistItem(String noteId, String text, {int? position}) async {
+  Future<ChecklistItem> addChecklistItem(
+    String noteId,
+    String text, {
+    int? position,
+    String? sectionId,
+  }) async {
     final response = await _dio.post(
       ApiEndpoints.noteChecklist(noteId),
-      data: {'text': text, if (position != null) 'position': position},
+      data: {
+        'text': text,
+        if (position != null) 'position': position,
+        if (sectionId != null && sectionId.isNotEmpty) 'sectionId': sectionId,
+      },
     );
     return ChecklistItem.fromJson(response.data as Map<String, dynamic>);
   }

@@ -83,6 +83,7 @@ class AuthService {
   }
 
   Future<UserModel> updateProfile({
+    String? username,
     String? displayName,
     bool? notePushEnabled,
     bool? checklistPushEnabled,
@@ -91,6 +92,7 @@ class AuthService {
     final response = await _dio.patch(
       ApiEndpoints.userMe,
       data: {
+        if (username != null) 'username': username,
         if (displayName != null || displayName == null) 'displayName': displayName,
         if (notePushEnabled != null) 'notePushEnabled': notePushEnabled,
         if (checklistPushEnabled != null) 'checklistPushEnabled': checklistPushEnabled,

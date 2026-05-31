@@ -194,4 +194,16 @@ class PersonalChatPreview {
       unreadCount: unreadCount,
     );
   }
+
+  PersonalChatPreview copyWith({
+    Map<String, String>? user,
+    PersonalChatMessage? lastMessage,
+    int? unreadCount,
+  }) {
+    return PersonalChatPreview(
+      user: user ?? this.user,
+      lastMessage: lastMessage ?? this.lastMessage,
+      unreadCount: unreadCount ?? this.unreadCount,
+    );
+  }
 }

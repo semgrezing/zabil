@@ -286,9 +286,10 @@ export async function addChecklistItem(app: FastifyInstance, noteId: string, use
   })
 
   const position = dto.position ?? (maxPosition._max.position ?? -1) + 1
+  const sectionId = dto.sectionId?.trim() || 'main'
 
   const item = await app.prisma.noteChecklistItem.create({
-    data: { noteId, text: dto.text, position },
+    data: { noteId, sectionId, text: dto.text, position },
   })
 
   return item

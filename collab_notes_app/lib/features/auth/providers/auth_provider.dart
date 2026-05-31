@@ -64,6 +64,17 @@ class AuthNotifier extends AsyncNotifier<AuthState> {
     return updated;
   }
 
+  Future<UserModel?> updateUsername(String username) async {
+    final current = state.valueOrNull?.user;
+    if (current == null) return null;
+    final updated = await _service.updateProfile(
+      username: username,
+      displayName: current.displayName,
+    );
+    state = AsyncData(AuthState.loggedIn(updated));
+    return updated;
+  }
+
   Future<UserModel?> uploadAvatar(String filePath) async {
     final current = state.valueOrNull?.user;
     if (current == null) return null;

@@ -44,6 +44,7 @@ export const moveNoteSchema = z
 export const createChecklistItemSchema = z.object({
   text: z.string().min(1).max(500),
   position: z.number().int().min(0).optional(),
+  sectionId: z.string().trim().min(1).max(64).optional(),
 })
 
 export const updateChecklistItemSchema = z.object({

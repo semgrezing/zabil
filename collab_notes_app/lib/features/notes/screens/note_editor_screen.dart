@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -29,7 +30,6 @@ class NoteEditorScreen extends ConsumerStatefulWidget {
 class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
   final _titleCtrl = TextEditingController();
   final _contentCtrl = TextEditingController();
-  final _checklistCtrl = TextEditingController();
   final _titleFocus = FocusNode();
   final _contentFocus = FocusNode();
   bool _isDirty = false;
@@ -52,6 +52,7 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
   String? _typingUserId;
   Timer? _typingTimer;
   Timer? _typingDebounce;
+  bool _startNewChecklistOnNextAdd = false;
 
   bool get _isNew => widget.noteId == null;
 
@@ -141,7 +142,6 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
     _debounce?.cancel();
     _titleCtrl.dispose();
     _contentCtrl.dispose();
-    _checklistCtrl.dispose();
     _titleFocus.dispose();
     _contentFocus.dispose();
     super.dispose();
@@ -227,7 +227,7 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
             RefreshIndicator(
               onRefresh: () => _checkForRemoteUpdates(note.id, fromPullToRefresh: true),
               child: ListView(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 132),
                 children: [
             if (_showRemoteBanner && _pendingRemoteNote != null)
               _buildRemoteUpdateBanner(note.id),
@@ -318,57 +318,9 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
             ),
             const Divider(height: 32),
 
-            // Checklist
-            if (note.checklistItems.isNotEmpty) ...[
-              Text('Чеклист', style: Theme.of(context).textTheme.labelLarge),
-              const SizedBox(height: 8),
-              ReorderableListView.builder(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                buildDefaultDragHandles: false,
-                itemCount: note.checklistItems.length,
-                onReorderItem: (oldIndex, newIndex) =>
-                    _reorderChecklistAdjusted(note, oldIndex, newIndex),
-                itemBuilder: (context, index) {
-                  final item = note.checklistItems[index];
-                  return _ChecklistItemTile(
-                    key: ValueKey(item.id),
-                    item: item,
-                    noteId: note.id,
-                    index: index,
-                    onToggle: (completed) {
-                      ref
-                          .read(noteDetailProvider(note.id).notifier)
-                          .toggleChecklistItem(item.id, completed);
-                    },
-                    onDelete: () => ref
-                        .read(noteDetailProvider(note.id).notifier)
-                        .deleteChecklistItem(item.id),
-                    onRename: (text) => ref
-                        .read(noteDetailProvider(note.id).notifier)
-                        .updateChecklistItemText(item.id, text),
-                  );
-                },
-              ),
-              const SizedBox(height: 8),
-            ],
-
-            // Add checklist item
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _checklistCtrl,
-                    decoration: const InputDecoration(
-                      hintText: 'Добавить пункт...',
-                      prefixIcon: Icon(Icons.add, size: 18),
-                    ),
-                    onSubmitted: (text) => _addChecklistItem(note.id, text),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
+            // Checklist sections
+            ..._buildChecklistSections(note),
+            if (note.checklistItems.isNotEmpty) const SizedBox(height: 8),
 
             // Images
             if (note.images.isNotEmpty) ...[
@@ -401,13 +353,6 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
               const SizedBox(height: 16),
             ],
 
-            // Upload image button
-            OutlinedButton.icon(
-              icon: const Icon(Icons.image_outlined),
-              label: const Text('Прикрепить изображение'),
-              onPressed:
-                  _uploadingImages ? null : () => _pickAndUploadImages(note.id),
-            ),
             if (_uploadingImages)
               const Padding(
                 padding: EdgeInsets.only(top: 8),
@@ -416,10 +361,170 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
           ],
               ),
             ),
+            _buildFloatingBar(note),
           ],
         ),
       ),
     );
+  }
+
+  Widget _buildFloatingBar(NoteModel note) {
+    final media = MediaQuery.of(context);
+    final keyboard = media.viewInsets.bottom;
+    final bottomOffset = keyboard > 0 ? keyboard + 12 : media.padding.bottom + 8;
+
+    return Positioned(
+      left: 12,
+      right: 12,
+      bottom: 0,
+      child: AnimatedPadding(
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOut,
+        padding: EdgeInsets.only(bottom: bottomOffset),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(16),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+            child: Container(
+              decoration: BoxDecoration(
+                color: AppColors.bg2.withValues(alpha: 0.75),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: Colors.white.withValues(alpha: 0.06),
+                  width: 1,
+                ),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                children: [
+                  _EditorBarAction(
+                    icon: SolarIconsOutline.checkCircle,
+                    label: 'Пункт',
+                    enabled: !_isSaving,
+                    onTap: () => _onChecklistActionTap(note),
+                  ),
+                  _EditorBarAction(
+                    icon: Icons.short_text_rounded,
+                    label: 'Текст',
+                    enabled: !_isSaving,
+                    onTap: () => _insertTextBlock(note.id),
+                  ),
+                  _EditorBarAction(
+                    icon: SolarIconsOutline.gallery,
+                    label: 'Изображение',
+                    enabled: !_uploadingImages,
+                    onTap: () => _pickAndUploadImages(note.id),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  List<Widget> _buildChecklistSections(NoteModel note) {
+    if (note.checklistItems.isEmpty) return const [];
+
+    final sections = _splitChecklistSections(note.checklistItems);
+    final widgets = <Widget>[];
+
+    for (var i = 0; i < sections.length; i++) {
+      final section = sections[i];
+      widgets.add(
+        Text(
+          sections.length == 1 ? 'Чеклист' : 'Чеклист ${i + 1}',
+          style: Theme.of(context).textTheme.labelLarge,
+        ),
+      );
+      widgets.add(const SizedBox(height: 8));
+      widgets.add(
+        ReorderableListView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          buildDefaultDragHandles: false,
+          itemCount: section.items.length,
+          onReorderItem: (oldIndex, newIndex) {
+            final oldGlobal = section.start + oldIndex;
+            final newGlobal = section.start + newIndex;
+            _reorderChecklistAdjusted(note, oldGlobal, newGlobal);
+          },
+          itemBuilder: (context, index) {
+            final item = section.items[index];
+            return _ChecklistItemTile(
+              key: ValueKey(item.id),
+              item: item,
+              noteId: note.id,
+              index: index,
+              onToggle: (completed) {
+                ref
+                    .read(noteDetailProvider(note.id).notifier)
+                    .toggleChecklistItem(item.id, completed);
+              },
+              onDelete: () => ref
+                  .read(noteDetailProvider(note.id).notifier)
+                  .deleteChecklistItem(item.id),
+              onRename: (text) => ref
+                  .read(noteDetailProvider(note.id).notifier)
+                  .updateChecklistItemText(item.id, text),
+            );
+          },
+        ),
+      );
+      widgets.add(
+        Align(
+          alignment: Alignment.centerLeft,
+          child: IconButton(
+            onPressed: () => _addItemToSection(note, section),
+            icon: const Icon(SolarIconsOutline.addCircle),
+            tooltip: 'Добавить пункт',
+          ),
+        ),
+      );
+      widgets.add(const SizedBox(height: 8));
+    }
+
+    return widgets;
+  }
+
+  List<_ChecklistSection> _splitChecklistSections(List<ChecklistItem> source) {
+    final items = [...source]..sort((a, b) => a.position.compareTo(b.position));
+    final sections = <_ChecklistSection>[];
+    var current = <ChecklistItem>[];
+    var currentSectionId = 'main';
+    var sectionStart = 0;
+
+    for (var i = 0; i < items.length; i++) {
+      final item = items[i];
+      final itemSectionId = item.sectionId.trim().isEmpty ? 'main' : item.sectionId;
+      if (current.isNotEmpty && itemSectionId != currentSectionId) {
+        sections.add(
+          _ChecklistSection(
+            start: sectionStart,
+            sectionId: currentSectionId,
+            items: current,
+          ),
+        );
+        current = <ChecklistItem>[item];
+        currentSectionId = itemSectionId;
+        sectionStart = i;
+      } else {
+        if (current.isEmpty) currentSectionId = itemSectionId;
+        current.add(item);
+      }
+    }
+
+    if (current.isNotEmpty) {
+      sections.add(
+        _ChecklistSection(
+          start: sectionStart,
+          sectionId: currentSectionId,
+          items: current,
+        ),
+      );
+    }
+    return sections;
   }
 
   Widget _buildRemoteUpdateBanner(String noteId) {
@@ -673,10 +778,112 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
     }
   }
 
-  Future<void> _addChecklistItem(String noteId, String text) async {
+  Future<void> _onChecklistActionTap(NoteModel note) async {
+    final text = await _showChecklistInputDialog();
+    if (text == null || text.trim().isEmpty) return;
+
+    final createNewSection = _startNewChecklistOnNextAdd && note.checklistItems.isNotEmpty;
+    final sectionId = createNewSection
+        ? _generateChecklistSectionId()
+        : (note.checklistItems.isNotEmpty
+            ? note.checklistItems.last.sectionId
+            : 'main');
+
+    await _addChecklistItem(note.id, text.trim(), sectionId: sectionId);
+
+    if (mounted && createNewSection) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Создан новый чеклист')),
+      );
+    }
+
+    setState(() => _startNewChecklistOnNextAdd = false);
+  }
+
+  Future<void> _addItemToSection(NoteModel note, _ChecklistSection section) async {
+    final text = await _showChecklistInputDialog();
+    if (text == null || text.trim().isEmpty) return;
+    await _addChecklistItem(
+      note.id,
+      text.trim(),
+      position: section.endExclusive,
+      sectionId: section.sectionId,
+    );
+  }
+
+  String _generateChecklistSectionId() {
+    return 'sec_${DateTime.now().microsecondsSinceEpoch}';
+  }
+
+  Future<String?> _showChecklistInputDialog() async {
+    final ctrl = TextEditingController();
+    final result = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      useRootNavigator: true,
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: ctrl,
+                autofocus: true,
+                decoration: const InputDecoration(
+                  hintText: 'Текст пункта',
+                ),
+                onSubmitted: (v) => Navigator.of(ctx).pop(v.trim()),
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: () => Navigator.of(ctx).pop(ctrl.text.trim()),
+                  child: const Text('Добавить'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    ctrl.dispose();
+    return result;
+  }
+
+  void _insertTextBlock(String noteId) {
+    final value = _contentCtrl.value;
+    final start = value.selection.start >= 0 ? value.selection.start : value.text.length;
+    final end = value.selection.end >= 0 ? value.selection.end : value.text.length;
+    const insertion = '\n\n';
+    final nextText = value.text.replaceRange(start, end, insertion);
+    final caret = start + insertion.length;
+
+    _contentCtrl.value = TextEditingValue(
+      text: nextText,
+      selection: TextSelection.collapsed(offset: caret),
+    );
+    _contentFocus.requestFocus();
+    setState(() => _startNewChecklistOnNextAdd = true);
+    _onEdited(noteId);
+    _emitTyping(noteId);
+  }
+
+  Future<void> _addChecklistItem(
+    String noteId,
+    String text, {
+    int? position,
+    String? sectionId,
+  }) async {
     if (text.trim().isEmpty) return;
-    _checklistCtrl.clear();
-    await ref.read(noteDetailProvider(noteId).notifier).addChecklistItem(text.trim());
+    await ref
+        .read(noteDetailProvider(noteId).notifier)
+        .addChecklistItem(
+          text.trim(),
+          position: position,
+          sectionId: sectionId,
+        );
   }
 
   Future<void> _pickAndUploadImages(String noteId) async {
@@ -895,6 +1102,62 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
         SnackBar(content: Text('Не удалось обновить цвет: $e')),
       );
     }
+  }
+}
+
+class _ChecklistSection {
+  final int start;
+  final String sectionId;
+  final List<ChecklistItem> items;
+
+  const _ChecklistSection({
+    required this.start,
+    required this.sectionId,
+    required this.items,
+  });
+
+  int get endExclusive => start + items.length;
+}
+
+class _EditorBarAction extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final bool enabled;
+  final VoidCallback onTap;
+
+  const _EditorBarAction({
+    required this.icon,
+    required this.label,
+    required this.enabled,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final color = enabled ? AppColors.white : AppColors.fgSoft.withValues(alpha: 0.5);
+    return Expanded(
+      child: InkWell(
+        onTap: enabled ? onTap : null,
+        child: SizedBox(
+          height: 56,
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, size: 18, color: color),
+              const SizedBox(height: 3),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 10,
+                  color: color,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 

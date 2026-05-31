@@ -364,26 +364,19 @@ class NoteDetailNotifier extends FamilyAsyncNotifier<NoteModel, String> {
     return _service.getNoteById(arg);
   }
 
-  Future<void> addChecklistItem(String text) async {
-    final item = await _service.addChecklistItem(arg, text);
-    state = state.whenData(
-      (note) => NoteModel(
-        id: note.id,
-        groupId: note.groupId,
-        groupTitle: note.groupTitle,
-        isPersonal: note.isPersonal,
-        title: note.title,
-        content: note.content,
-        colorLabel: note.colorLabel,
-        archived: note.archived,
-        pinned: note.pinned,
-        createdAt: note.createdAt,
-        updatedAt: note.updatedAt,
-        creator: note.creator,
-        checklistItems: [...note.checklistItems, item],
-        images: note.images,
-      ),
+  Future<void> addChecklistItem(
+    String text, {
+    int? position,
+    String? sectionId,
+  }) async {
+    await _service.addChecklistItem(
+      arg,
+      text,
+      position: position,
+      sectionId: sectionId,
     );
+    final refreshed = await _service.getNoteById(arg);
+    state = AsyncData(refreshed);
   }
 
   Future<void> toggleChecklistItem(String itemId, bool completed) async {
@@ -407,6 +400,7 @@ class NoteDetailNotifier extends FamilyAsyncNotifier<NoteModel, String> {
                 ? ChecklistItem(
                     id: i.id,
                     noteId: i.noteId,
+                    sectionId: i.sectionId,
                     text: i.text,
                     completed: completed,
                     position: i.position,

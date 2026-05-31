@@ -446,39 +446,9 @@ class _NotesListScreenState extends ConsumerState<NotesListScreen> {
                         ),
                       );
 
-                return AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 420),
-                  switchInCurve: Curves.easeOutCubic,
-                  switchOutCurve: Curves.easeInCubic,
-                  layoutBuilder: (currentChild, previousChildren) => Stack(
-                    alignment: Alignment.topCenter,
-                    children: [
-                      ...previousChildren,
-                      if (currentChild != null) currentChild,
-                    ],
-                  ),
-                  transitionBuilder: (child, animation) {
-                    final fade = CurvedAnimation(
-                      parent: animation,
-                      curve: Curves.easeOutCubic,
-                    );
-                    final scale = Tween<double>(begin: 0.96, end: 1.0).animate(fade);
-                    final slide = Tween<Offset>(
-                      begin: const Offset(0, 0.025),
-                      end: Offset.zero,
-                    ).animate(fade);
-                    return FadeTransition(
-                      opacity: fade,
-                      child: SlideTransition(
-                        position: slide,
-                        child: ScaleTransition(scale: scale, child: child),
-                      ),
-                    );
-                  },
-                  child: KeyedSubtree(
-                    key: ValueKey(_gridView ? 'notes_grid_view' : 'notes_list_view'),
-                    child: viewport,
-                  ),
+                return KeyedSubtree(
+                  key: ValueKey(_gridView ? 'notes_grid_view' : 'notes_list_view'),
+                  child: viewport,
                 );
               },
             ),

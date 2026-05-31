@@ -239,6 +239,7 @@ model AvatarHistory {
 model NoteChecklistItem {
   id        String   @id @default(uuid())
   noteId    String   @map("note_id")
+  sectionId String   @default("main") @map("section_id")
   text      String
   completed Boolean  @default(false)
   position  Int
@@ -247,6 +248,7 @@ model NoteChecklistItem {
   note Note @relation(fields: [noteId], references: [id], onDelete: Cascade)
 
   @@index([noteId, position])
+  @@index([noteId, sectionId, position])
   @@map("note_checklist_items")
 }
 

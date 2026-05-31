@@ -9,6 +9,7 @@ import 'package:solar_icons/solar_icons.dart';
 import '../../../shared/theme/app_colors.dart';
 import '../../../shared/theme/app_dimensions.dart';
 import '../../../shared/widgets/app_loader.dart';
+import '../../auth/providers/auth_provider.dart';
 import '../../groups/providers/groups_provider.dart';
 import '../../groups/widgets/create_group_sheet.dart';
 import '../../groups/widgets/invite_member_sheet.dart';
@@ -89,6 +90,7 @@ class _PersonalTab extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final async = ref.watch(personalConversationsProvider);
+    final myUserId = ref.watch(authStateProvider).valueOrNull?.user?.id;
     return async.when(
       loading: () => const AppLoader(),
       error: (e, _) => AppErrorState(
@@ -108,78 +110,20 @@ class _PersonalTab extends ConsumerWidget {
           onRefresh: () =>
               ref.read(personalConversationsProvider.notifier).refresh(),
           child: ListView.separated(
+            padding: const EdgeInsets.fromLTRB(8, 12, 8, 16),
             itemCount: list.length,
-            separatorBuilder: (_, __) =>
-                const Divider(height: 1, indent: 72),
+            separatorBuilder: (_, __) => const SizedBox(height: 4),
             itemBuilder: (context, i) {
               final c = list[i];
               final displayName = _displayName(c.user);
               final avatarUrl = _avatarUrl(c.user);
-              final preview = c.lastMessage.body.trim().isNotEmpty
-                  ? c.lastMessage.body
-                  : c.lastMessage.imageUrl != null
-                      ? 'Фото'
-                      : '';
-              return ListTile(
-                leading: Stack(
-                  clipBehavior: Clip.none,
-                  children: [
-                    CircleAvatar(
-                      backgroundImage:
-                          avatarUrl != null ? NetworkImage(avatarUrl) : null,
-                      child: avatarUrl == null
-                          ? Text(displayName.isNotEmpty
-                              ? displayName[0].toUpperCase()
-                              : '?')
-                          : null,
-                    ),
-                    Positioned(
-                      right: -1,
-                      bottom: -1,
-                      child: _OnlineDot(isOnline: c.isOnline),
-                    ),
-                  ],
-                ),
-                title: Text(displayName),
-                subtitle: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      _presenceLabel(c.isOnline, c.lastSeenAt),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: c.isOnline ? Colors.green.shade700 : AppColors.fgSoft,
-                          ),
-                    ),
-                    Text(
-                      preview,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
-                ),
-                trailing: c.unreadCount > 0
-                    ? Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 2,
-                        ),
-                        decoration: BoxDecoration(
-                          color: AppColors.negative,
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                        child: Text(
-                          '${c.unreadCount}',
-                          style: const TextStyle(
-                            color: AppColors.white,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      )
-                    : null,
+              return _PersonalConversationCard(
+                avatarUrl: avatarUrl,
+                displayName: displayName,
+                isOnline: c.isOnline,
+                unreadCount: c.unreadCount,
+                lastMessage: c.lastMessage,
+                showStatus: c.lastMessage.senderId == myUserId,
                 onTap: () => context.push(
                   '/chats/personal/${c.user['id']}?username=$displayName',
                 ),
@@ -222,6 +166,14 @@ class _GroupsTabState extends ConsumerState<_GroupsTab> {
         setState(() {
           _previewFutures.remove(groupId);
         });
+        return;
+      }
+      if (event is GroupReadReceiptEvent) {
+        final groupId = event.groupId;
+        if (groupId.isEmpty) return;
+        setState(() {
+          _previewFutures.remove(groupId);
+        });
       }
     });
   }
@@ -240,6 +192,7 @@ class _GroupsTabState extends ConsumerState<_GroupsTab> {
   @override
   Widget build(BuildContext context) {
     final groupsAsync = ref.watch(groupsProvider);
+    final myUserId = ref.watch(authStateProvider).valueOrNull?.user?.id;
     return groupsAsync.when(
       loading: () => const AppLoader(),
       error: (e, _) => AppErrorState(
@@ -255,8 +208,9 @@ class _GroupsTabState extends ConsumerState<_GroupsTab> {
           );
         }
         return ListView.separated(
+          padding: const EdgeInsets.fromLTRB(8, 12, 8, 16),
           itemCount: groups.length,
-          separatorBuilder: (_, __) => const Divider(height: 1, indent: 72),
+          separatorBuilder: (_, __) => const SizedBox(height: 4),
           itemBuilder: (context, i) {
             final g = groups[i];
             return FutureBuilder<List<GroupChatMessage>>(
@@ -265,32 +219,19 @@ class _GroupsTabState extends ConsumerState<_GroupsTab> {
                 final message = snapshot.data?.isNotEmpty == true
                     ? snapshot.data!.first
                     : null;
-                final subtitle = message == null
-                  ? '${g.members.length} участников · Создать первое сообщение'
-                  : '${g.members.length} участников · ${_displayName(message.sender)}: ${_previewText(message)}';
-                final trailing = message == null
-                    ? null
-                    : Text(
-                        DateFormat('HH:mm').format(message.createdAt.toLocal()),
-                        style: Theme.of(context).textTheme.bodySmall,
-                      );
-
-                return ListTile(
-                  leading: CircleAvatar(
-                    backgroundImage: _groupAvatarUrl(g.avatarUrl) != null
-                        ? NetworkImage(_groupAvatarUrl(g.avatarUrl)!)
-                        : null,
-                    child: _groupAvatarUrl(g.avatarUrl) == null
-                        ? Text(g.title.isNotEmpty ? g.title[0].toUpperCase() : '?')
-                        : null,
-                  ),
-                  title: Text(g.title),
-                  subtitle: Text(
-                    subtitle,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  trailing: trailing,
+                return _GroupConversationCard(
+                  avatarUrl: _groupAvatarUrl(g.avatarUrl),
+                  title: g.title,
+                  senderName: message == null ? null : _displayName(message.sender),
+                  previewText: message == null
+                      ? 'Создать первое сообщение'
+                      : _previewText(message),
+                  timeLabel: message == null
+                      ? null
+                      : DateFormat('HH:mm').format(message.createdAt.toLocal()),
+                  showStatus: message != null && message.senderId == myUserId,
+                  isRead: message?.isReadByMe ?? false,
+                  readCount: message?.readCount ?? 0,
                   onTap: () => context.push(
                     '/chats/group/${g.id}?title=${Uri.encodeComponent(g.title)}',
                   ),
@@ -537,16 +478,6 @@ String? _groupAvatarUrl(String? raw) {
   return '${AppConfig.apiOrigin}$value';
 }
 
-String _presenceLabel(bool isOnline, DateTime? lastSeenAt) {
-  if (isOnline) return 'В сети';
-  if (lastSeenAt == null) return 'Не в сети';
-  final diff = DateTime.now().difference(lastSeenAt.toLocal());
-  if (diff.inMinutes < 1) return 'Был(а) только что';
-  if (diff.inMinutes < 60) return 'Был(а) ${diff.inMinutes} мин назад';
-  if (diff.inHours < 24) return 'Был(а) ${diff.inHours} ч назад';
-  return 'Был(а) ${DateFormat('dd.MM.yyyy HH:mm').format(lastSeenAt.toLocal())}';
-}
-
 class _OnlineDot extends StatelessWidget {
   final bool isOnline;
 
@@ -554,11 +485,12 @@ class _OnlineDot extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (!isOnline) return const SizedBox.shrink();
     return Container(
       width: 10,
       height: 10,
       decoration: BoxDecoration(
-        color: isOnline ? Colors.green.shade600 : Theme.of(context).colorScheme.outline,
+        color: Colors.green.shade600,
         shape: BoxShape.circle,
         border: Border.all(
           color: Theme.of(context).colorScheme.surface,
@@ -567,4 +499,311 @@ class _OnlineDot extends StatelessWidget {
       ),
     );
   }
+}
+
+class _PersonalConversationCard extends StatelessWidget {
+  final String? avatarUrl;
+  final String displayName;
+  final bool isOnline;
+  final int unreadCount;
+  final PersonalChatMessage lastMessage;
+  final bool showStatus;
+  final VoidCallback onTap;
+
+  const _PersonalConversationCard({
+    required this.avatarUrl,
+    required this.displayName,
+    required this.isOnline,
+    required this.unreadCount,
+    required this.lastMessage,
+    required this.showStatus,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return _ConversationCardShell(
+      onTap: onTap,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Stack(
+            clipBehavior: Clip.none,
+            children: [
+              CircleAvatar(
+                radius: 24,
+                backgroundColor: const Color(0xFF2A2A2A),
+                backgroundImage:
+                    avatarUrl != null ? NetworkImage(avatarUrl!) : null,
+                child: avatarUrl == null
+                    ? Text(
+                        displayName.isNotEmpty ? displayName[0].toUpperCase() : '?',
+                        style: const TextStyle(color: AppColors.white),
+                      )
+                    : null,
+              ),
+              Positioned(
+                right: 0,
+                bottom: 0,
+                child: _OnlineDot(isOnline: isOnline),
+              ),
+            ],
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        displayName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: AppColors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          height: 1.25,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    _MessageMeta(
+                      timeLabel: DateFormat('HH:mm').format(lastMessage.createdAt.toLocal()),
+                      showStatus: showStatus,
+                      isRead: lastMessage.readAt != null,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  _previewTextPersonal(lastMessage),
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: AppColors.fgSoft,
+                    fontSize: 14,
+                    height: 1.35,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (unreadCount > 0) ...[
+            const SizedBox(width: 12),
+            _ConversationCounter(count: unreadCount),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _GroupConversationCard extends StatelessWidget {
+  final String? avatarUrl;
+  final String title;
+  final String? senderName;
+  final String previewText;
+  final String? timeLabel;
+  final bool showStatus;
+  final bool isRead;
+  final int readCount;
+  final VoidCallback onTap;
+
+  const _GroupConversationCard({
+    required this.avatarUrl,
+    required this.title,
+    required this.senderName,
+    required this.previewText,
+    required this.timeLabel,
+    required this.showStatus,
+    required this.isRead,
+    required this.readCount,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return _ConversationCardShell(
+      onTap: onTap,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          CircleAvatar(
+            radius: 24,
+            backgroundColor: const Color(0xFF2A2A2A),
+            backgroundImage:
+                avatarUrl != null ? NetworkImage(avatarUrl!) : null,
+            child: avatarUrl == null
+                ? Text(
+                    title.isNotEmpty ? title[0].toUpperCase() : '?',
+                    style: const TextStyle(color: AppColors.white),
+                  )
+                : null,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: AppColors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          height: 1.25,
+                        ),
+                      ),
+                    ),
+                    if (timeLabel != null) ...[
+                      const SizedBox(width: 12),
+                      _MessageMeta(
+                        timeLabel: timeLabel!,
+                        showStatus: showStatus,
+                        isRead: isRead || readCount > 0,
+                      ),
+                    ],
+                  ],
+                ),
+                const SizedBox(height: 4),
+                if (senderName != null) ...[
+                  Text(
+                    senderName!,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: AppColors.fgSoft,
+                      fontSize: 12,
+                      height: 1.3,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                ],
+                Text(
+                  previewText,
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: AppColors.fgSoft,
+                    fontSize: 14,
+                    height: 1.35,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ConversationCardShell extends StatefulWidget {
+  final Widget child;
+  final VoidCallback onTap;
+
+  const _ConversationCardShell({required this.child, required this.onTap});
+
+  @override
+  State<_ConversationCardShell> createState() => _ConversationCardShellState();
+}
+
+class _ConversationCardShellState extends State<_ConversationCardShell> {
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: widget.onTap,
+        borderRadius: BorderRadius.circular(24),
+        hoverColor: Colors.white.withValues(alpha: 0.03),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+          child: widget.child,
+        ),
+      ),
+    );
+  }
+}
+
+class _MessageMeta extends StatelessWidget {
+  final String timeLabel;
+  final bool showStatus;
+  final bool isRead;
+
+  const _MessageMeta({
+    required this.timeLabel,
+    required this.showStatus,
+    required this.isRead,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (showStatus) ...[
+          Icon(
+            isRead ? Icons.done_all : Icons.done,
+            size: 14,
+            color: isRead ? const Color(0xFFB6FF35) : AppColors.fgSoft,
+          ),
+          const SizedBox(width: 6),
+        ],
+        Text(
+          timeLabel,
+          style: const TextStyle(
+            color: AppColors.fgSoft,
+            fontSize: 12,
+            height: 1.2,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ConversationCounter extends StatelessWidget {
+  final int count;
+
+  const _ConversationCounter({required this.count});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0059FF),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      alignment: Alignment.center,
+      child: Text(
+        '$count',
+        style: const TextStyle(
+          color: AppColors.white,
+          fontSize: 13,
+          height: 1.1,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+}
+
+String _previewTextPersonal(PersonalChatMessage message) {
+  final body = message.body.trim();
+  if (body.isNotEmpty) return body;
+  if (message.imageUrl != null) return 'Фото';
+  return 'Сообщение';
 }

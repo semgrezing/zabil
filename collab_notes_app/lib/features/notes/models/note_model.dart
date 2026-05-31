@@ -3,6 +3,7 @@ import '../../../core/config/app_config.dart';
 class ChecklistItem {
   final String id;
   final String noteId;
+  final String sectionId;
   final String text;
   final bool completed;
   final int position;
@@ -10,6 +11,7 @@ class ChecklistItem {
   const ChecklistItem({
     required this.id,
     required this.noteId,
+    required this.sectionId,
     required this.text,
     required this.completed,
     required this.position,
@@ -18,6 +20,9 @@ class ChecklistItem {
   factory ChecklistItem.fromJson(Map<String, dynamic> json) => ChecklistItem(
         id: json['id'] as String,
         noteId: json['noteId'] as String,
+      sectionId: (json['sectionId'] as String?)?.trim().isNotEmpty == true
+      ? (json['sectionId'] as String)
+      : 'main',
         text: json['text'] as String,
         completed: json['completed'] as bool,
         position: json['position'] as int,

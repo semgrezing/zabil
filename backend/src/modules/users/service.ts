@@ -54,18 +54,33 @@ export async function updateProfile(
   app: FastifyInstance,
   userId: string,
   dto: {
+    username?: string
     displayName?: string | null
     notePushEnabled?: boolean
     checklistPushEnabled?: boolean
     releasePushEnabled?: boolean
   },
 ) {
-  const raw = dto.displayName?.trim()
-  const displayName = raw && raw.length > 0 ? raw : null
+  const username = dto.username?.trim()
+  if (username && username.length > 0) {
+    const existing = await app.prisma.user.findUnique({
+      where: { username },
+      select: { id: true },
+    })
+    if (existing && existing.id !== userId) {
+      throw errors.conflict('Пользователь с таким именем уже существует')
+    }
+  }
+
+  const hasDisplayName = Object.prototype.hasOwnProperty.call(dto, 'displayName')
+  const rawDisplayName = hasDisplayName ? dto.displayName?.trim() : undefined
+  const displayName = rawDisplayName && rawDisplayName.length > 0 ? rawDisplayName : null
+
   const user = await app.prisma.user.update({
     where: { id: userId },
     data: {
-      displayName,
+      ...(username ? { username } : {}),
+      ...(hasDisplayName ? { displayName } : {}),
       ...(dto.notePushEnabled != null
           ? { notePushEnabled: dto.notePushEnabled }
           : {}),

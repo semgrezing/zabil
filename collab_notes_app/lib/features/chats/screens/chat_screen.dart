@@ -1,5 +1,6 @@
 ﻿import 'dart:async';
 import 'dart:io' show Platform;
+import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -55,12 +56,17 @@ class ChatScreen extends ConsumerStatefulWidget {
 
 class _ChatScreenState extends ConsumerState<ChatScreen> {
   final _inputCtrl = TextEditingController();
+  final _composerFocusNode = FocusNode();
   final _scrollCtrl = ScrollController();
   bool _sending = false;
   StreamSubscription<WsEvent>? _wsSub;
   GroupModel? _groupMeta;
   final Map<String, _TypingUser> _typingUsers = {};
   Timer? _typingDebounce;
+
+  static const double _composerBottomGap = 8;
+  static const double _composerHorizontalGap = 12;
+  static const double _composerListInset = 120;
 
   // Personal chat peer profile (avatar, online status)
   ChatUserProfile? _peerProfile;
@@ -69,6 +75,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       Platform.isWindows || Platform.isLinux || Platform.isMacOS;
 
   bool get _isTopLevelGroupChat => widget.groupId != null && widget.noteId == null;
+  bool get _hasComposerText => _inputCtrl.text.trim().isNotEmpty;
 
   String? get _groupHintLabel {
     if (!_isTopLevelGroupChat) return widget.subtitle;
@@ -110,6 +117,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       entry.timer.cancel();
     }
     _inputCtrl.dispose();
+    _composerFocusNode.dispose();
     _scrollCtrl.dispose();
     super.dispose();
   }
@@ -212,6 +220,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     setState(() {
       _typingUsers[userId] = _TypingUser(name: name, timer: timer);
     });
+  }
+
+  Future<void> _openSystemEmojiKeyboard() async {
+    _composerFocusNode.requestFocus();
+    await SystemChannels.textInput.invokeMethod('TextInput.show');
   }
 
   Future<void> _send() async {
@@ -429,25 +442,27 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     // Personal 1:1 chat — show avatar + name + online status
     if (widget.userId != null) {
       return AppBar(
-        leadingWidth: 56,
-        leading: GestureDetector(
-          onTap: () => context.push('/users/${widget.userId}'),
-          child: Padding(
-            padding: const EdgeInsets.only(left: 8),
-            child: _PeerAvatarWithDot(
-              profile: _peerProfile,
-              title: widget.title,
-              resolveUrl: _resolveImageUrl,
-            ),
-          ),
-        ),
+        titleSpacing: 4,
         title: GestureDetector(
           onTap: () => context.push('/users/${widget.userId}'),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          child: Row(
             children: [
-              Text(widget.title, overflow: TextOverflow.ellipsis),
-              _PeerOnlineSubtitle(profile: _peerProfile),
+              _PeerAvatarWithDot(
+                profile: _peerProfile,
+                title: widget.title,
+                resolveUrl: _resolveImageUrl,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(widget.title, overflow: TextOverflow.ellipsis),
+                    _PeerOnlineSubtitle(profile: _peerProfile),
+                  ],
+                ),
+              ),
             ],
           ),
         ),
@@ -495,12 +510,27 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: _buildAppBar(context),
+      extendBody: true,
       body: _wrapWithPasteHandler(
-        child: Column(
+        child: Stack(
           children: [
-            Expanded(child: _buildMessages(context)),
-            _TypingStrip(label: _typingLabel),
-            SafeArea(top: false, child: _buildComposer(context)),
+            Positioned.fill(child: _buildMessages(context)),
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: SafeArea(
+                top: false,
+                minimum: const EdgeInsets.only(bottom: _composerBottomGap),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _TypingStrip(label: _typingLabel),
+                    _buildComposer(context),
+                  ],
+                ),
+              ),
+            ),
           ],
         ),
       ),
@@ -568,7 +598,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     return ListView.builder(
       controller: _scrollCtrl,
       reverse: true,
-      padding: const EdgeInsets.all(AppSpacing.lg),
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.lg,
+        AppSpacing.lg,
+        AppSpacing.lg,
+        _composerListInset,
+      ),
       itemCount: messages.length,
       itemBuilder: (context, i) {
         final m = messages[i];
@@ -625,7 +660,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     return ListView.builder(
       controller: _scrollCtrl,
       reverse: true,
-      padding: const EdgeInsets.all(AppSpacing.lg),
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.lg,
+        AppSpacing.lg,
+        AppSpacing.lg,
+        _composerListInset,
+      ),
       itemCount: messages.length,
       itemBuilder: (context, i) {
         final m = messages[i];
@@ -645,79 +685,121 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   }
 
   Widget _buildComposer(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
-      decoration: const BoxDecoration(
-        border: Border(top: BorderSide(color: AppColors.borderSubtle)),
-      ),
-      child: Row(
-        children: [
-          IconButton(
-            icon: const Icon(SolarIconsOutline.gallery),
-            tooltip: 'Изображения',
-            onPressed: _sending ? null : _pickAndSendImages,
-          ),
-          Expanded(
-            child: TextField(
-              controller: _inputCtrl,
-              minLines: 1,
-              maxLines: 5,
-              textInputAction: TextInputAction.send,
-              onChanged: (value) {
-                if (value.trim().isEmpty) {
-                  // Field cleared — stop typing immediately
-                  _typingDebounce?.cancel();
-                  _typingDebounce = null;
-                  _sendTypingStop();
-                  return;
-                }
-                final ws = ref.read(wsClientProvider);
-                if (widget.groupId != null) {
-                  ws.sendChatTypingGroup(widget.groupId!);
-                } else if (widget.userId != null) {
-                  ws.sendChatTypingPersonal(widget.userId!);
-                }
-                // Schedule typing_stop after 2s of inactivity
-                _typingDebounce?.cancel();
-                _typingDebounce = Timer(const Duration(seconds: 2), () {
-                  _typingDebounce = null;
-                  _sendTypingStop();
-                });
-              },
-              onSubmitted: (_) => _send(),
-              decoration: const InputDecoration(
-                hintText: 'Сообщение',
-                filled: true,
+    final hasText = _hasComposerText;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: _composerHorizontalGap),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+          child: Container(
+            decoration: BoxDecoration(
+              color: AppColors.bg2.withValues(alpha: 0.75),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: Colors.white.withValues(alpha: 0.06),
+                width: 1,
               ),
             ),
-          ),
-          const SizedBox(width: 8),
-          Material(
-            color: AppColors.white,
-            shape: const CircleBorder(),
-            child: InkWell(
-              customBorder: const CircleBorder(),
-              onTap: _sending ? null : _send,
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: _sending
-                    ? const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: AppColors.fgContainer,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: IconButton(
+                    icon: Icon(
+                      hasText
+                          ? Icons.emoji_emotions_outlined
+                          : SolarIconsOutline.gallery,
+                      color: AppColors.fgSoft,
+                    ),
+                    tooltip: hasText ? 'Эмодзи' : 'Изображения',
+                    onPressed: _sending
+                        ? null
+                        : (hasText ? _openSystemEmojiKeyboard : _pickAndSendImages),
+                  ),
+                ),
+                Expanded(
+                  child: TextField(
+                    controller: _inputCtrl,
+                    focusNode: _composerFocusNode,
+                    minLines: 1,
+                    maxLines: 5,
+                    textInputAction: TextInputAction.send,
+                    style: const TextStyle(color: AppColors.white),
+                    cursorColor: AppColors.white,
+                    onChanged: (value) {
+                      final nowHasText = value.trim().isNotEmpty;
+                      if (nowHasText != hasText) {
+                        setState(() {});
+                      }
+
+                      if (!nowHasText) {
+                        // Field cleared — stop typing immediately.
+                        _typingDebounce?.cancel();
+                        _typingDebounce = null;
+                        _sendTypingStop();
+                        return;
+                      }
+
+                      final ws = ref.read(wsClientProvider);
+                      if (widget.groupId != null) {
+                        ws.sendChatTypingGroup(widget.groupId!);
+                      } else if (widget.userId != null) {
+                        ws.sendChatTypingPersonal(widget.userId!);
+                      }
+
+                      // Schedule typing_stop after 2s of inactivity.
+                      _typingDebounce?.cancel();
+                      _typingDebounce = Timer(const Duration(seconds: 2), () {
+                        _typingDebounce = null;
+                        _sendTypingStop();
+                      });
+                    },
+                    onSubmitted: (_) => _send(),
+                    decoration: const InputDecoration(
+                      hintText: 'Сообщение...',
+                      hintStyle: TextStyle(color: AppColors.fgSoft),
+                      border: InputBorder.none,
+                      isDense: true,
+                      contentPadding: EdgeInsets.fromLTRB(0, 10, 0, 10),
+                    ),
+                  ),
+                ),
+                if (hasText)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 6, bottom: 6),
+                    child: Material(
+                      color: AppColors.white,
+                      shape: const CircleBorder(),
+                      child: InkWell(
+                        customBorder: const CircleBorder(),
+                        onTap: _sending ? null : _send,
+                        child: Padding(
+                          padding: const EdgeInsets.all(10),
+                          child: _sending
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: AppColors.fgContainer,
+                                  ),
+                                )
+                              : const Icon(
+                                  Icons.arrow_upward_rounded,
+                                  color: AppColors.fgContainer,
+                                  size: 20,
+                                ),
                         ),
-                      )
-                    : const Icon(
-                        SolarIconsBold.plain,
-                        color: AppColors.fgContainer,
-                        size: 20,
                       ),
-              ),
+                    ),
+                  ),
+              ],
             ),
           ),
-        ],
+        ),
       ),
     );
   }
@@ -768,6 +850,7 @@ class _MessageBubble extends StatelessWidget {
     final bg = mine ? AppColors.white : AppColors.bg2;
     final fg = mine ? AppColors.fgContainer : AppColors.white;
     final parsedNoteColor = _safeColor(noteColorLabel);
+    final hasOutsideStatus = deliveryStatus != null;
 
     if (_isImageOnly) {
       return Padding(
@@ -776,6 +859,10 @@ class _MessageBubble extends StatelessWidget {
           mainAxisAlignment:
               mine ? MainAxisAlignment.end : MainAxisAlignment.start,
           children: [
+            if (mine && hasOutsideStatus) ...[
+              _outsideDeliveryIndicator(),
+              const SizedBox(width: 6),
+            ],
             Flexible(
               child: ConstrainedBox(
                 constraints: BoxConstraints(
@@ -838,6 +925,10 @@ class _MessageBubble extends StatelessWidget {
                 ),
               ),
             ),
+            if (!mine && hasOutsideStatus) ...[
+              const SizedBox(width: 6),
+              _outsideDeliveryIndicator(),
+            ],
           ],
         ),
       );
@@ -849,6 +940,10 @@ class _MessageBubble extends StatelessWidget {
         mainAxisAlignment:
             mine ? MainAxisAlignment.end : MainAxisAlignment.start,
         children: [
+          if (mine && hasOutsideStatus) ...[
+            _outsideDeliveryIndicator(),
+            const SizedBox(width: 6),
+          ],
           Flexible(
             child: ConstrainedBox(
               constraints: BoxConstraints(
@@ -956,7 +1051,30 @@ class _MessageBubble extends StatelessWidget {
               ),
             ),
           ),
+          if (!mine && hasOutsideStatus) ...[
+            const SizedBox(width: 6),
+            _outsideDeliveryIndicator(),
+          ],
         ],
+      ),
+    );
+  }
+
+  Widget _outsideDeliveryIndicator() {
+    final status = deliveryStatus;
+    if (status == null) return const SizedBox.shrink();
+
+    return SizedBox(
+      width: 14,
+      height: 14,
+      child: Icon(
+        status == _MessageDeliveryStatus.read
+            ? Icons.done_all_rounded
+            : Icons.done_rounded,
+        size: 13,
+        color: status == _MessageDeliveryStatus.read
+            ? AppColors.success
+            : AppColors.fgSoft,
       ),
     );
   }
@@ -975,25 +1093,6 @@ class _MessageBubble extends StatelessWidget {
             color: fg,
           ),
         ),
-        if (mine && deliveryStatus != null) ...[
-          const SizedBox(width: 6),
-          Icon(
-            deliveryStatus == _MessageDeliveryStatus.read
-                ? Icons.done_all_rounded
-                : Icons.done_rounded,
-            size: 12,
-            color: deliveryStatus == _MessageDeliveryStatus.read
-                ? AppColors.success
-                : fg,
-          ),
-          const SizedBox(width: 4),
-          Text(
-            deliveryStatus == _MessageDeliveryStatus.read
-                ? 'Прочитано'
-                : 'Отправлено',
-            style: TextStyle(fontSize: 10, color: fg),
-          ),
-        ],
       ],
     );
   }

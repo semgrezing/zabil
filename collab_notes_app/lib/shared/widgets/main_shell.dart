@@ -282,32 +282,13 @@ class _NoteFab extends ConsumerWidget {
     } else {
       final selected = await showModalBottomSheet<_NoteContext>(
         context: context,
-        showDragHandle: true,
+        backgroundColor: Colors.transparent,
+        barrierColor: Colors.black54,
+        clipBehavior: Clip.antiAlias,
+        constraints: const BoxConstraints(maxWidth: 393),
+        showDragHandle: false,
         useRootNavigator: true,
-        builder: (ctx) => Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Text(
-                'Выберите группу',
-                style: Theme.of(ctx).textTheme.titleMedium,
-              ),
-            ),
-            ...contexts.map(
-              (c) => ListTile(
-                leading: Icon(
-                  c.personal
-                      ? SolarIconsOutline.user
-                      : SolarIconsOutline.usersGroupRounded,
-                ),
-                title: Text(c.title),
-                onTap: () => Navigator.of(ctx).pop(c),
-              ),
-            ),
-            const SizedBox(height: 16),
-          ],
-        ),
+        builder: (ctx) => _NoteLocationSheet(contexts: contexts),
       );
       if (selected != null && context.mounted) {
         if (selected.personal) {
@@ -325,6 +306,159 @@ class _NoteContext {
   final String title;
   final bool personal;
   const _NoteContext({required this.id, required this.title, required this.personal});
+}
+
+class _NoteLocationSheet extends StatelessWidget {
+  final List<_NoteContext> contexts;
+
+  const _NoteLocationSheet({required this.contexts});
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      top: false,
+      child: Container(
+        width: double.infinity,
+        decoration: const BoxDecoration(
+          color: Color(0xFF1F1F1F),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 12),
+            const _BottomSheetHandle(),
+            const SizedBox(height: 16),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'Выберите, где создать заметку',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        color: AppColors.white,
+                        fontWeight: FontWeight.w600,
+                      ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  for (final contextItem in contexts) ...[
+                    _NoteLocationOption(
+                      title: contextItem.title,
+                      personal: contextItem.personal,
+                      onTap: () => Navigator.of(context).pop(contextItem),
+                    ),
+                    if (contextItem != contexts.last) const SizedBox(height: 8),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _BottomSheetHandle extends StatelessWidget {
+  const _BottomSheetHandle();
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 40,
+      height: 4,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: const Color(0xFF9C9C9C),
+          borderRadius: BorderRadius.circular(999),
+        ),
+      ),
+    );
+  }
+}
+
+class _NoteLocationOption extends StatelessWidget {
+  final String title;
+  final bool personal;
+  final VoidCallback onTap;
+
+  const _NoteLocationOption({
+    required this.title,
+    required this.personal,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(32),
+        hoverColor: Colors.white.withValues(alpha: 0.05),
+        child: Ink(
+          decoration: BoxDecoration(
+            color: Colors.transparent,
+            borderRadius: BorderRadius.circular(32),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            child: Row(
+              children: [
+                Container(
+                  width: 48,
+                  height: 48,
+                  decoration: const BoxDecoration(
+                    color: Color(0xFF2A2A2A),
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: AppColors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w500,
+                      height: 1.3,
+                    ),
+                  ),
+                ),
+                if (personal)
+                  const Padding(
+                    padding: EdgeInsets.only(left: 12),
+                    child: Icon(
+                      SolarIconsOutline.user,
+                      size: 18,
+                      color: AppColors.fgSoft,
+                    ),
+                  )
+                else
+                  const Padding(
+                    padding: EdgeInsets.only(left: 12),
+                    child: Icon(
+                      SolarIconsOutline.usersGroupRounded,
+                      size: 18,
+                      color: AppColors.fgSoft,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _TabItem {

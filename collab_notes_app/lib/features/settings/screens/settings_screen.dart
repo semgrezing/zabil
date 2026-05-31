@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_cropper/image_cropper.dart';
 import 'package:image_picker/image_picker.dart';
@@ -71,9 +72,9 @@ class SettingsScreen extends ConsumerWidget {
             const _SectionHeader(label: 'Уведомления'),
             SwitchListTile.adaptive(
               secondary: const Icon(SolarIconsOutline.notes),
-              title: const Text('Пуши по заметкам'),
+              title: const Text('Заметки'),
               subtitle: const Text(
-                'Новые и обновлённые заметки в группах',
+                'Изменения заметок в группах',
                 style: TextStyle(color: AppColors.fgSoft),
               ),
               value: user.notePushEnabled,
@@ -83,9 +84,9 @@ class SettingsScreen extends ConsumerWidget {
             ),
             SwitchListTile.adaptive(
               secondary: const Icon(SolarIconsOutline.checkCircle),
-              title: const Text('Пуши по чеклистам'),
+              title: const Text('Чеклисты'),
               subtitle: const Text(
-                'Только при полном завершении чеклиста',
+                'При полном завершении чеклиста',
                 style: TextStyle(color: AppColors.fgSoft),
               ),
               value: user.checklistPushEnabled,
@@ -95,7 +96,7 @@ class SettingsScreen extends ConsumerWidget {
             ),
             SwitchListTile.adaptive(
               secondary: const Icon(SolarIconsOutline.download),
-              title: const Text('Пуши новых версий'),
+              title: const Text('Новые версии'),
               subtitle: const Text(
                 'APK/EXE с прямой ссылкой на скачивание',
                 style: TextStyle(color: AppColors.fgSoft),
@@ -308,6 +309,7 @@ class _EditProfileSheet extends ConsumerStatefulWidget {
 }
 
 class _EditProfileSheetState extends ConsumerState<_EditProfileSheet> {
+  final _usernameCtrl = TextEditingController();
   final _nameCtrl = TextEditingController();
   String? _avatarPath;
   String? _serverAvatarUrl;
@@ -316,14 +318,27 @@ class _EditProfileSheetState extends ConsumerState<_EditProfileSheet> {
   @override
   void initState() {
     super.initState();
+    _usernameCtrl.text = widget.user.username;
     _nameCtrl.text = widget.user.displayName ?? '';
     _serverAvatarUrl = widget.user.avatarResolvedUrl;
   }
 
   @override
   void dispose() {
+    _usernameCtrl.dispose();
     _nameCtrl.dispose();
     super.dispose();
+  }
+
+  String? _validateUsername(String value) {
+    final v = value.trim();
+    if (v.isEmpty) return 'Введите username';
+    if (v.length < 3) return 'Минимум 3 символа';
+    if (v.length > 30) return 'Максимум 30 символов';
+    if (!RegExp(r'^[a-zA-Z0-9_]+$').hasMatch(v)) {
+      return 'Только буквы, цифры и _';
+    }
+    return null;
   }
 
   Future<void> _pickAvatar() async {
@@ -418,11 +433,25 @@ class _EditProfileSheetState extends ConsumerState<_EditProfileSheet> {
 
   Future<void> _save() async {
     if (_saving) return;
+    final nextUsername = _usernameCtrl.text.trim();
+    final usernameError = _validateUsername(nextUsername);
+    if (usernameError != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(usernameError)),
+      );
+      return;
+    }
+
     setState(() => _saving = true);
     try {
       final notifier = ref.read(authStateProvider.notifier);
+      final currentUsername = widget.user.username.trim();
       final currentName = widget.user.displayName?.trim() ?? '';
       final nextName = _nameCtrl.text.trim();
+
+      if (nextUsername != currentUsername) {
+        await notifier.updateUsername(nextUsername);
+      }
 
       if (nextName != currentName) {
         await notifier.updateDisplayName(nextName.isEmpty ? null : nextName);
@@ -510,6 +539,19 @@ class _EditProfileSheetState extends ConsumerState<_EditProfileSheet> {
               ],
             ),
             const SizedBox(height: AppSpacing.lg),
+            TextField(
+              controller: _usernameCtrl,
+              enabled: !_saving,
+              decoration: const InputDecoration(
+                labelText: 'Username',
+                hintText: 'Ваш уникальный @username',
+                prefixText: '@',
+              ),
+              inputFormatters: [
+                FilteringTextInputFormatter.allow(RegExp(r'[a-zA-Z0-9_]')),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.md),
             TextField(
               controller: _nameCtrl,
               enabled: !_saving,
