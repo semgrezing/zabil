@@ -5,36 +5,12 @@ import path from 'path'
 import fs from 'fs'
 import { errors } from '../../utils/errors.js'
 import { env } from '../../config/env.js'
-
-const ALLOWED_MIME_TYPES = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/webp'])
-const ALLOWED_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp'])
-const MAGIC_BYTES: Record<string, number[]> = {
-  'image/jpeg': [0xff, 0xd8, 0xff],
-  'image/png': [0x89, 0x50, 0x4e, 0x47],
-  'image/webp': [0x52, 0x49, 0x46, 0x46],
-}
-
-const userProfileSelect = {
-  id: true,
-  username: true,
-  displayName: true,
-  avatarUrl: true,
-  notePushEnabled: true,
-  checklistPushEnabled: true,
-  releasePushEnabled: true,
-} as const
-
-function ensureDir(dir: string) {
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true })
-  }
-}
-
-function checkMagicBytes(buffer: Buffer, mimeType: string): boolean {
-  const magic = MAGIC_BYTES[mimeType]
-  if (!magic) return false
-  return magic.every((byte, i) => buffer[i] === byte)
-}
+import {
+  ALLOWED_MIME_TYPES,
+  ALLOWED_EXTENSIONS,
+  checkMagicBytes,
+  ensureUploadDir as ensureDir,
+} from '../../utils/upload-helpers.js'
 
 function resolveAvatarPath(avatarUrl: string) {
   const filename = avatarUrl.split('/').pop() ?? ''

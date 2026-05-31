@@ -1,110 +1,17 @@
 import { FastifyInstance } from 'fastify'
 import sharp from 'sharp'
 import { v4 as uuidv4 } from 'uuid'
-import fs from 'fs'
 import path from 'path'
+import fs from 'fs'
 import { CreateGroupDto, UpdateGroupDto } from './schema.js'
 import { errors } from '../../utils/errors.js'
 import { env } from '../../config/env.js'
-import { notifyGroupDeleted, notifyGroupMemberRemoved } from '../notifications/service.js'
-
-const groupMemberUserSelect = {
-  id: true,
-  username: true,
-  displayName: true,
-  avatarUrl: true,
-  lastSeenAt: true,
-} as const
-
-const groupLastMessageInclude = {
-  orderBy: { createdAt: 'desc' },
-  take: 1,
-  include: {
-    sender: {
-      select: groupMemberUserSelect,
-    },
-  },
-} as const
-
-const groupInclude = {
-  members: {
-    include: {
-      user: { select: groupMemberUserSelect },
-    },
-  },
-  chatMessages: groupLastMessageInclude,
-} as const
-
-type GroupWithPreview = Awaited<ReturnType<typeof buildGroupPayload>>
-
-async function buildGroupPayload(group: {
-  id: string
-  title: string
-  avatarUrl: string | null
-  isPersonal: boolean
-  members: Array<{
-    id: string
-    role: string
-    user: {
-      id: string
-      username: string
-      displayName: string | null
-      avatarUrl: string | null
-      lastSeenAt: Date | null
-    }
-  }>
-  chatMessages: Array<{
-    id: string
-    body: string
-    imageUrl: string | null
-    createdAt: Date
-    sender: {
-      id: string
-      username: string
-      displayName: string | null
-      avatarUrl: string | null
-      lastSeenAt: Date | null
-    }
-  }>
-}) {
-  const [lastMessage] = group.chatMessages
-  return {
-    id: group.id,
-    title: group.title,
-    avatarUrl: group.avatarUrl,
-    isPersonal: group.isPersonal,
-    members: group.members,
-    lastMessage: lastMessage
-        ? {
-            id: lastMessage.id,
-            body: lastMessage.body,
-            imageUrl: lastMessage.imageUrl,
-            createdAt: lastMessage.createdAt,
-            sender: lastMessage.sender,
-          }
-        : null,
-  }
-}
-
-const ALLOWED_MIME_TYPES = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/webp'])
-const ALLOWED_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp'])
-const MAGIC_BYTES: Record<string, number[]> = {
-  'image/jpeg': [0xff, 0xd8, 0xff],
-  'image/png': [0x89, 0x50, 0x4e, 0x47],
-  'image/webp': [0x52, 0x49, 0x46, 0x46],
-}
-
-function ensureDir(dir: string) {
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true })
-  }
-}
-
-function checkMagicBytes(buffer: Buffer, mimeType: string): boolean {
-  const magic = MAGIC_BYTES[mimeType]
-  if (!magic) return false
-  return magic.every((byte, i) => buffer[i] === byte)
-}
+import {
+  ALLOWED_MIME_TYPES,
+  ALLOWED_EXTENSIONS,
+  checkMagicBytes,
+  ensureUploadDir as ensureDir,
+} from '../../utils/upload-helpers.js'
 
 function resolveGroupAvatarPath(avatarUrl: string) {
   const filename = avatarUrl.split('/').pop() ?? ''

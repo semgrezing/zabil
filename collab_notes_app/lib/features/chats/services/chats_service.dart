@@ -141,6 +141,14 @@ class ChatsService {
     await _dio.post(ApiEndpoints.personalMarkRead(userId));
   }
 
+  Future<void> deleteGroupMessage(String groupId, String messageId) async {
+    await _dio.delete(ApiEndpoints.deleteGroupMessage(groupId, messageId));
+  }
+
+  Future<void> deletePersonalMessage(String otherUserId, String messageId) async {
+    await _dio.delete(ApiEndpoints.deletePersonalMessage(otherUserId, messageId));
+  }
+
   // ─── Users search (для нового личного чата) ──────────────────────────────
   Future<List<Map<String, String>>> searchUsers(String query) async {
     try {

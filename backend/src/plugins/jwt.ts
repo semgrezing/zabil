@@ -19,7 +19,7 @@ const jwtPlugin: FastifyPluginAsync = fp(async (app) => {
     try {
       await request.jwtVerify()
     } catch (err) {
-      reply.status(401).send({ error: 'Не авторизован', code: 'UNAUTHORIZED' })
+      return reply.status(401).send({ error: 'Не авторизован', code: 'UNAUTHORIZED' })
     }
   })
 })

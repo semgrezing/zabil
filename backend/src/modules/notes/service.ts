@@ -73,6 +73,7 @@ export async function getNotes(app: FastifyInstance, userId: string, query: Note
           { content: { contains: query.search, mode: 'insensitive' } },
         ],
       }),
+      ...(query.cursor ? { updatedAt: { lt: new Date(query.cursor) } } : {}),
     },
     include: {
       creator: { select: { id: true, username: true, displayName: true, avatarUrl: true } },
@@ -81,6 +82,7 @@ export async function getNotes(app: FastifyInstance, userId: string, query: Note
       group: { select: { id: true, title: true, isPersonal: true } },
     },
     orderBy: [{ pinned: 'desc' }, { updatedAt: 'desc' }],
+    take: query.limit,
   })
 }
 
@@ -319,7 +321,7 @@ export async function updateChecklistItem(
     note.checklistItems.every((checklistItem) => checklistItem.completed)
 
   const item = await app.prisma.noteChecklistItem.update({
-    where: { id: itemId },
+    where: { id: itemId, noteId },
     data: dto,
   })
 
@@ -355,7 +357,7 @@ export async function deleteChecklistItem(app: FastifyInstance, noteId: string, 
   const isMember = await requireGroupMember(app, userId, note.groupId)
   if (!isMember) throw errors.forbidden()
 
-  await app.prisma.noteChecklistItem.delete({ where: { id: itemId } })
+  await app.prisma.noteChecklistItem.delete({ where: { id: itemId, noteId } })
 
   return { success: true }
 }

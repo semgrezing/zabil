@@ -12,11 +12,14 @@ class GroupChatMessage {
   final String? imageMimeType;
   final int? imageSize;
   final bool? imageCompressed;
+  final DateTime? deletedAt;
   final DateTime createdAt;
   /// Number of group members (excluding sender) who have read this message.
   final int readCount;
   /// Whether the current viewer has read this message.
   final bool isReadByMe;
+
+  bool get isDeleted => deletedAt != null;
 
   const GroupChatMessage({
     required this.id,
@@ -31,10 +34,18 @@ class GroupChatMessage {
     required this.imageMimeType,
     required this.imageSize,
     required this.imageCompressed,
+    this.deletedAt,
     required this.createdAt,
     this.readCount = 0,
     this.isReadByMe = false,
   });
+
+  GroupChatMessage asDeleted() => GroupChatMessage(
+    id: id, groupId: groupId, senderId: senderId, sender: sender,
+    noteId: noteId, noteTitle: noteTitle, noteColorLabel: noteColorLabel,
+    body: '', imageUrl: null, imageMimeType: null, imageSize: null,
+    imageCompressed: null, deletedAt: DateTime.now(), createdAt: createdAt,
+  );
 
   factory GroupChatMessage.fromJson(Map<String, dynamic> json) => GroupChatMessage(
         id: json['id'] as String,
@@ -91,7 +102,10 @@ class PersonalChatMessage {
   final int? imageSize;
   final bool? imageCompressed;
   final DateTime? readAt;
+  final DateTime? deletedAt;
   final DateTime createdAt;
+
+  bool get isDeleted => deletedAt != null;
 
   const PersonalChatMessage({
     required this.id,
@@ -103,8 +117,16 @@ class PersonalChatMessage {
     required this.imageSize,
     required this.imageCompressed,
     required this.readAt,
+    this.deletedAt,
     required this.createdAt,
   });
+
+  PersonalChatMessage asDeleted() => PersonalChatMessage(
+    id: id, senderId: senderId, receiverId: receiverId,
+    body: '', imageUrl: null, imageMimeType: null, imageSize: null,
+    imageCompressed: null, readAt: readAt, deletedAt: DateTime.now(),
+    createdAt: createdAt,
+  );
 
   factory PersonalChatMessage.fromJson(Map<String, dynamic> json) => PersonalChatMessage(
         id: json['id'] as String,

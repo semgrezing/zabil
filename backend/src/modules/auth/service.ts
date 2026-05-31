@@ -101,11 +101,27 @@ export async function logoutUser(app: FastifyInstance, refreshToken: string) {
   })
 }
 
-async function issueTokens(app: FastifyInstance, userId: string, username: string) {
+export async function issueTokens(app: FastifyInstance, userId: string, username: string) {
   const accessToken = app.jwt.sign(
     { userId, username },
     { expiresIn: env.JWT_ACCESS_EXPIRES }
   )
+
+  // Clean up expired tokens for this user
+  await app.prisma.refreshToken.deleteMany({
+    where: { userId, expiresAt: { lt: new Date() } },
+  })
+
+  // Enforce max 10 active tokens per user (delete oldest)
+  const activeTokens = await app.prisma.refreshToken.findMany({
+    where: { userId },
+    orderBy: { createdAt: 'asc' },
+    select: { id: true },
+  })
+  if (activeTokens.length >= 10) {
+    const toDelete = activeTokens.slice(0, activeTokens.length - 9).map((t) => t.id)
+    await app.prisma.refreshToken.deleteMany({ where: { id: { in: toDelete } } })
+  }
 
   const rawRefreshToken = uuidv4()
   const expiresAt = addDays(new Date(), env.JWT_REFRESH_EXPIRES_DAYS)

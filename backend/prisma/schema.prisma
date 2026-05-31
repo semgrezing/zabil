@@ -16,6 +16,8 @@ model User {
   passwordHash String    @map("password_hash")
   displayName  String?   @map("display_name")
   avatarUrl    String?   @map("avatar_url")
+  isAdmin      Boolean   @default(false) @map("is_admin")
+  telegramId   String?   @unique @map("telegram_id")
   notePushEnabled Boolean @default(false) @map("note_push_enabled")
   checklistPushEnabled Boolean @default(false) @map("checklist_push_enabled")
   releasePushEnabled Boolean @default(true) @map("release_push_enabled")
@@ -131,16 +133,17 @@ model Note {
 // Один общий стрим сообщений на группу. Если `noteId` указан — сообщение
 // также показывается в чате конкретной заметки (note-chat = filtered view).
 model GroupChatMessage {
-  id        String   @id @default(uuid())
-  groupId   String   @map("group_id")
-  senderId  String   @map("sender_id")
-  noteId    String?  @map("note_id") // optional — note-chat marker
+  id        String    @id @default(uuid())
+  groupId   String    @map("group_id")
+  senderId  String    @map("sender_id")
+  noteId    String?   @map("note_id") // optional — note-chat marker
   body      String
-  imageUrl  String?  @map("image_url")
+  imageUrl  String?   @map("image_url")
   imageMimeType String? @map("image_mime_type")
-  imageSize Int? @map("image_size")
+  imageSize Int?      @map("image_size")
   imageCompressed Boolean? @map("image_compressed")
-  createdAt DateTime @default(now()) @map("created_at")
+  deletedAt DateTime? @map("deleted_at")
+  createdAt DateTime  @default(now()) @map("created_at")
 
   group   Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
   sender  User  @relation(fields: [senderId], references: [id], onDelete: Cascade)
@@ -169,16 +172,17 @@ model GroupMessageRead {
 
 // Личные 1:1 чаты между пользователями.
 model PersonalMessage {
-  id         String   @id @default(uuid())
-  senderId   String   @map("sender_id")
-  receiverId String   @map("receiver_id")
+  id         String    @id @default(uuid())
+  senderId   String    @map("sender_id")
+  receiverId String    @map("receiver_id")
   body       String
-  imageUrl   String?  @map("image_url")
+  imageUrl   String?   @map("image_url")
   imageMimeType String? @map("image_mime_type")
-  imageSize  Int?     @map("image_size")
+  imageSize  Int?      @map("image_size")
   imageCompressed Boolean? @map("image_compressed")
   readAt     DateTime? @map("read_at")
-  createdAt  DateTime @default(now()) @map("created_at")
+  deletedAt  DateTime? @map("deleted_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
 
   sender   User @relation("PersonalSender", fields: [senderId], references: [id], onDelete: Cascade)
   receiver User @relation("PersonalReceiver", fields: [receiverId], references: [id], onDelete: Cascade)

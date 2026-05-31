@@ -92,7 +92,7 @@ export async function createRelease(
   },
 ) {
   const user = await app.prisma.user.findUnique({ where: { id: userId } })
-  if (!user || user.username !== 'semvanic') {
+  if (!user || !user.isAdmin) {
     throw errors.forbidden()
   }
   if (!['android', 'windows'].includes(dto.platform)) {

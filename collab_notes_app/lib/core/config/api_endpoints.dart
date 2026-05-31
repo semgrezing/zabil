@@ -62,8 +62,9 @@ class ApiEndpoints {
 
   // Chats (Stage 7)
   static String groupChatMessages(String groupId) => '/chats/groups/$groupId/messages';
-  static String groupMarkRead(String groupId) => '/chats/groups/$groupId/read';
+  static String deleteGroupMessage(String groupId, String messageId) => '/chats/groups/$groupId/messages/$messageId';
   static const String personalChats = '/chats/personal';
   static String personalMessages(String userId) => '/chats/personal/$userId/messages';
+  static String deletePersonalMessage(String userId, String messageId) => '/chats/personal/$userId/messages/$messageId';
   static String personalMarkRead(String userId) => '/chats/personal/$userId/read';
 }

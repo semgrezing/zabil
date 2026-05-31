@@ -199,19 +199,11 @@ class GroupChatNotifier
             return [message, ...list];
           });
         } catch (_) {}
-      } else if (event is GroupReadReceiptEvent) {
-        if (event.groupId != arg.groupId) return;
-        final ids = event.messageIds.toSet();
-        final myId = ref.read(authStateProvider).valueOrNull?.user?.id;
-        state = state.whenData((list) => list.map((m) {
-              if (!ids.contains(m.id)) return m;
-              // Increment readCount if the reader is not the sender
-              final isOtherReader = event.readerId != m.senderId;
-              return m.copyWith(
-                readCount: isOtherReader ? m.readCount + 1 : m.readCount,
-                isReadByMe: event.readerId == myId ? true : m.isReadByMe,
-              );
-            }).toList());
+      } else if (event is MessageDeletedEvent && event.kind == 'group') {
+        final deletedId = event.messageId;
+        state = state.whenData((list) => list
+            .map((m) => m.id == deletedId ? m.asDeleted() : m)
+            .toList());
       }
     });
     ref.onDispose(() {
@@ -296,14 +288,10 @@ class PersonalChatNotifier
             _scheduleMarkRead();
           }
         } catch (_) {}
-      } else if (event is PersonalReadReceiptEvent) {
-        if (event.peerUserId != arg) return;
-        if (event.messageIds.isEmpty) return;
-        final ids = event.messageIds.toSet();
+      } else if (event is MessageDeletedEvent && event.kind == 'personal') {
+        final deletedId = event.messageId;
         state = state.whenData((list) => list
-            .map((m) => ids.contains(m.id)
-                ? m.copyWith(readAt: event.readAt)
-                : m)
+            .map((m) => m.id == deletedId ? m.asDeleted() : m)
             .toList());
       }
     });

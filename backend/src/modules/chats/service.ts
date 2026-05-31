@@ -23,7 +23,7 @@ export async function getGroupMessages(
     where: {
       groupId,
       ...(opts.noteId !== undefined && opts.noteId !== null ? { noteId: opts.noteId } : {}),
-      ...(opts.before ? { id: { lt: opts.before } } : {}),
+      ...(opts.before ? { createdAt: { lt: new Date(opts.before) } } : {}),
     },
     include: {
       sender: { select: { id: true, username: true, displayName: true, avatarUrl: true } },
@@ -33,7 +33,6 @@ export async function getGroupMessages(
     orderBy: { createdAt: 'desc' },
     take: limit,
   })
-  // Attach read metadata: readCount (excluding sender) and isReadByMe
   return messages.map((m) => ({
     ...m,
     readCount: m.reads.filter((r) => r.userId !== m.senderId).length,
@@ -62,6 +61,10 @@ export async function sendGroupMessage(
   }
   const member = await requireGroupMember(app, senderId, groupId)
   if (!member) throw errors.forbidden()
+
+  if (body.imageUrl && !body.imageUrl.startsWith('/uploads/')) {
+    throw errors.badRequest('Недопустимый imageUrl')
+  }
 
   if (body.noteId) {
     // Проверяем что заметка действительно из этой группы
@@ -150,7 +153,7 @@ export async function getPersonalMessages(
         { senderId: userId, receiverId: otherUserId },
         { senderId: otherUserId, receiverId: userId },
       ],
-      ...(opts.before ? { id: { lt: opts.before } } : {}),
+      ...(opts.before ? { createdAt: { lt: new Date(opts.before) } } : {}),
     },
     orderBy: { createdAt: 'desc' },
     take: limit,
@@ -177,6 +180,10 @@ export async function sendPersonalMessage(
 
   const receiver = await app.prisma.user.findUnique({ where: { id: receiverId } })
   if (!receiver) throw errors.notFound('Пользователь')
+
+  if (payload.imageUrl && !payload.imageUrl.startsWith('/uploads/')) {
+    throw errors.badRequest('Недопустимый imageUrl')
+  }
 
   const message = await app.prisma.personalMessage.create({
     data: {
@@ -231,54 +238,67 @@ export async function sendPersonalMessage(
 }
 
 export async function getPersonalConversations(app: FastifyInstance, userId: string) {
-  // Получаем всех собеседников через массовый запрос + агрегируем последнее сообщение
-  const messages = await app.prisma.personalMessage.findMany({
-    where: { OR: [{ senderId: userId }, { receiverId: userId }] },
-    orderBy: { createdAt: 'desc' },
-    take: 1000,
-  })
-  // Группируем по otherUserId
-  const conversations = new Map<
-    string,
-    { otherUserId: string; lastMessage: any; unreadCount: number }
-  >()
-  for (const m of messages) {
-    const other = m.senderId === userId ? m.receiverId : m.senderId
-    let conv = conversations.get(other)
-    if (!conv) {
-      conv = { otherUserId: other, lastMessage: m, unreadCount: 0 }
-      conversations.set(other, conv)
-    }
-    if (m.receiverId === userId && !m.readAt) {
-      conv.unreadCount += 1
-    }
-  }
-  // Подтянем username'ы
-  const userIds = Array.from(conversations.keys())
-  if (userIds.length === 0) return []
-  const users = await app.prisma.user.findMany({
-    where: { id: { in: userIds } },
-    select: {
-      id: true,
-      username: true,
-      displayName: true,
-      avatarUrl: true,
-      lastSeenAt: true,
-    },
-  })
+  // Efficient: get distinct conversation partners with their last message
+  // using a raw query to avoid loading 1000 messages.
+  const partnerRows = await app.prisma.$queryRaw<
+    Array<{ other_id: string; last_msg_id: string; last_created_at: Date }>
+  >`
+    SELECT DISTINCT ON (other_id) other_id, id AS last_msg_id, created_at AS last_created_at
+    FROM (
+      SELECT
+        CASE WHEN sender_id = ${userId}::uuid THEN receiver_id ELSE sender_id END AS other_id,
+        id,
+        created_at
+      FROM personal_messages
+      WHERE sender_id = ${userId}::uuid OR receiver_id = ${userId}::uuid
+    ) sub
+    ORDER BY other_id, last_created_at DESC
+  `
+
+  if (partnerRows.length === 0) return []
+
+  const otherUserIds = partnerRows.map((r) => r.other_id)
+  const lastMsgIds = partnerRows.map((r) => r.last_msg_id)
+
+  const [lastMessages, unreadRows, users] = await Promise.all([
+    app.prisma.personalMessage.findMany({ where: { id: { in: lastMsgIds } } }),
+    app.prisma.personalMessage.groupBy({
+      by: ['senderId'],
+      where: { receiverId: userId, readAt: null, senderId: { in: otherUserIds } },
+      _count: { id: true },
+    }),
+    app.prisma.user.findMany({
+      where: { id: { in: otherUserIds } },
+      select: { id: true, username: true, displayName: true, avatarUrl: true },
+    }),
+  ])
+
+  const msgMap = new Map(lastMessages.map((m) => [m.id, m]))
+  const unreadMap = new Map(unreadRows.map((r) => [r.senderId, r._count.id]))
   const userMap = new Map(users.map((u) => [u.id, u]))
-  return Array.from(conversations.values()).map((c) => ({
-    user: {
-      id: c.otherUserId,
-      username: userMap.get(c.otherUserId)?.username ?? '?',
-      displayName: userMap.get(c.otherUserId)?.displayName ?? null,
-      avatarUrl: userMap.get(c.otherUserId)?.avatarUrl ?? null,
-      lastSeenAt: userMap.get(c.otherUserId)?.lastSeenAt?.toISOString() ?? null,
-      isOnline: computeIsOnline(userMap.get(c.otherUserId)?.lastSeenAt ?? null),
-    },
-    lastMessage: c.lastMessage,
-    unreadCount: c.unreadCount,
-  }))
+
+  return partnerRows
+    .map((r) => {
+      const lastMessage = msgMap.get(r.last_msg_id)
+      if (!lastMessage) return null
+      const u = userMap.get(r.other_id)
+      return {
+        user: {
+          id: r.other_id,
+          username: u?.username ?? '?',
+          displayName: u?.displayName ?? null,
+          avatarUrl: u?.avatarUrl ?? null,
+        },
+        lastMessage,
+        unreadCount: unreadMap.get(r.other_id) ?? 0,
+      }
+    })
+    .filter(Boolean)
+    .sort(
+      (a, b) =>
+        new Date(b!.lastMessage.createdAt).getTime() -
+        new Date(a!.lastMessage.createdAt).getTime(),
+    )
 }
 
 export async function markGroupRead(
@@ -379,4 +399,91 @@ export async function markPersonalRead(
   // Sender gets explicit read receipts, reader updates own devices too.
   sendToUser(otherUserId, payload)
   sendToUser(userId, payload)
+}
+
+export async function markGroupRead(
+  _app: FastifyInstance,
+  _userId: string,
+  _groupId: string,
+) {
+  // Group read receipts not yet implemented in this version
+  // TODO: implement when GroupMessageRead model is added
+}
+
+const DELETE_WINDOW_MS = 15 * 60 * 1000 // 15 minutes
+
+export async function deleteGroupMessage(
+  app: FastifyInstance,
+  userId: string,
+  groupId: string,
+  messageId: string,
+) {
+  const member = await requireGroupMember(app, userId, groupId)
+  if (!member) throw errors.forbidden()
+
+  const message = await app.prisma.groupChatMessage.findFirst({
+    where: { id: messageId, groupId, deletedAt: null },
+  })
+  if (!message) throw errors.notFound('Сообщение')
+  if (message.senderId !== userId) throw errors.forbidden()
+  if (Date.now() - message.createdAt.getTime() > DELETE_WINDOW_MS) {
+    throw errors.badRequest('Сообщение можно удалить только в течение 15 минут')
+  }
+
+  const updated = await app.prisma.groupChatMessage.update({
+    where: { id: messageId },
+    data: { deletedAt: new Date(), body: '', imageUrl: null },
+  })
+
+  // Broadcast deletion event to group members
+  const members = await app.prisma.groupMember.findMany({
+    where: { groupId },
+    select: { userId: true },
+  })
+  const wsPayload = {
+    type: 'message_deleted',
+    kind: 'group',
+    data: { id: messageId, groupId },
+  }
+  members.forEach((m) => sendToUser(m.userId, wsPayload))
+
+  return updated
+}
+
+export async function deletePersonalMessage(
+  app: FastifyInstance,
+  userId: string,
+  otherUserId: string,
+  messageId: string,
+) {
+  const message = await app.prisma.personalMessage.findFirst({
+    where: {
+      id: messageId,
+      OR: [
+        { senderId: userId, receiverId: otherUserId },
+        { senderId: otherUserId, receiverId: userId },
+      ],
+      deletedAt: null,
+    },
+  })
+  if (!message) throw errors.notFound('Сообщение')
+  if (message.senderId !== userId) throw errors.forbidden()
+  if (Date.now() - message.createdAt.getTime() > DELETE_WINDOW_MS) {
+    throw errors.badRequest('Сообщение можно удалить только в течение 15 минут')
+  }
+
+  const updated = await app.prisma.personalMessage.update({
+    where: { id: messageId },
+    data: { deletedAt: new Date(), body: '', imageUrl: null },
+  })
+
+  const wsPayload = {
+    type: 'message_deleted',
+    kind: 'personal',
+    data: { id: messageId, senderId: userId, receiverId: otherUserId },
+  }
+  sendToUser(userId, wsPayload)
+  sendToUser(otherUserId, wsPayload)
+
+  return updated
 }

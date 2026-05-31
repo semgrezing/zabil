@@ -247,6 +247,29 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             ),
           ),
           const SizedBox(height: 12),
+          SizedBox(
+            height: _kBtnH,
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              icon: const Icon(Icons.telegram, color: Color(0xFF2AABEE), size: 22),
+              label: const Text(
+                'Войти через Telegram',
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w500,
+                  color: Colors.white,
+                ),
+              ),
+              onPressed: loading ? null : _loginWithTelegram,
+              style: OutlinedButton.styleFrom(
+                side: BorderSide(color: Colors.white.withValues(alpha: 0.2)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(_kRadius),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
           Center(
             child: TextButton(
               onPressed: () => context.go('/register'),
@@ -264,6 +287,15 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  Future<void> _loginWithTelegram() async {
+    // TODO: Implement actual Telegram OAuth flow when TELEGRAM_BOT_TOKEN is configured.
+    // This requires a real Telegram Bot Token and a publicly accessible server.
+    // The flow: open Telegram Login Widget URL → get auth data → POST /auth/telegram
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Telegram OAuth — coming soon')),
     );
   }
 }

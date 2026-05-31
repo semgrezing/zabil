@@ -17,6 +17,7 @@ import '../../../shared/widgets/typing_indicator.dart';
 import '../../../shared/widgets/note_presence_bar.dart';
 import '../../../core/realtime/ws_client.dart';
 import '../../../features/groups/providers/groups_provider.dart';
+import 'image_viewer_screen.dart';
 
 class NoteEditorScreen extends ConsumerStatefulWidget {
   final String? noteId;
@@ -169,11 +170,16 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
     _hydrateControllersFromNote(note);
 
     return PopScope(
-      canPop: !_isSaving,
+      canPop: !_isDirty && !_isSaving,
       onPopInvokedWithResult: (didPop, _) async {
-        if (didPop && _isDirty) {
+        if (didPop) return;
+        // User tried to go back while dirty or saving — save first, then pop.
+        if (_isDirty) {
           _debounce?.cancel();
           await _saveNote(note.id);
+        }
+        if (!_isSaving && context.mounted) {
+          context.pop();
         }
       },
       child: Scaffold(
@@ -337,14 +343,58 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
                 itemCount: note.images.length,
                 itemBuilder: (context, index) {
                   final image = note.images[index];
-                  return ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: _ResilientNoteImage(
-                      urls: image.urlCandidates,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_) => Container(
-                        color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                        child: const Icon(Icons.broken_image_outlined),
+                  return GestureDetector(
+                    onTap: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => ImageViewerScreen(
+                            noteId: note.id,
+                            images: note.images,
+                            initialIndex: index,
+                          ),
+                        ),
+                      );
+                    },
+                    onLongPress: () async {
+                      final confirmed = await showDialog<bool>(
+                        context: context,
+                        builder: (ctx) => AlertDialog(
+                          title: const Text('Удалить изображение?'),
+                          actions: [
+                            TextButton(
+                              onPressed: () => Navigator.of(ctx).pop(false),
+                              child: const Text('Отмена'),
+                            ),
+                            TextButton(
+                              onPressed: () => Navigator.of(ctx).pop(true),
+                              child: const Text('Удалить'),
+                            ),
+                          ],
+                        ),
+                      );
+                      if (confirmed == true && context.mounted) {
+                        try {
+                          await ref
+                              .read(noteEditorProvider(note.id).notifier)
+                              .deleteImage(image.id);
+                        } catch (e) {
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text('Не удалось удалить: $e')),
+                            );
+                          }
+                        }
+                      }
+                    },
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: Image.network(
+                        image.url,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => Container(
+                          color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                          child: const Icon(Icons.broken_image_outlined),
+                        ),
                       ),
                     ),
                   );

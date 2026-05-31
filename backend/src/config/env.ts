@@ -6,7 +6,6 @@ const envSchema = z.object({
   PORT: z.string().default('3000').transform(Number),
   DATABASE_URL: z.string().min(1),
   JWT_SECRET: z.string().min(32),
-  JWT_REFRESH_SECRET: z.string().min(32),
   JWT_ACCESS_EXPIRES: z.string().default('15m'),
   JWT_REFRESH_EXPIRES_DAYS: z.string().default('30').transform(Number),
   CORS_ORIGIN: z.string().default('*'),
@@ -19,6 +18,8 @@ const envSchema = z.object({
   FIREBASE_SERVICE_ACCOUNT_JSON: z.string().default(''),
   // Origin для построения downloadUrl в /update. Например https://api.achiemvemer.ru
   PUBLIC_ORIGIN: z.string().default('https://api.achiemvemer.ru'),
+  // Telegram Bot Token для OAuth верификации
+  TELEGRAM_BOT_TOKEN: z.string().default(''),
 })
 
 const parsed = envSchema.safeParse(process.env)

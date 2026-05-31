@@ -230,10 +230,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   Future<void> _send() async {
     final text = _inputCtrl.text.trim();
     if (text.isEmpty || _sending) return;
-    // Stop typing indicator immediately on send
-    _typingDebounce?.cancel();
-    _typingDebounce = null;
-    _sendTypingStop();
+    HapticFeedback.lightImpact();
     setState(() => _sending = true);
     final messenger = ScaffoldMessenger.of(context);
     try {
@@ -324,90 +321,55 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     }
   }
 
-  /// Handle Ctrl+V paste on desktop: check clipboard for image bytes.
-  Future<void> _handleDesktopPaste() async {
-    if (_sending || !_isDesktop) return;
-
-    try {
-      final imageBytes = await Pasteboard.image;
-      if (imageBytes == null || imageBytes.isEmpty) return;
-      // Clipboard contained an image -- send it with compression by default.
-      await _sendPastedImage(imageBytes);
-    } catch (_) {
-      // Clipboard did not contain an image or read failed; let the TextField
-      // handle the paste as plain text (default behaviour).
+  Future<void> _confirmDeleteGroupMessage(BuildContext ctx, String groupId, String messageId) async {
+    final confirmed = await showDialog<bool>(
+      context: ctx,
+      builder: (dialogCtx) => AlertDialog(
+        title: const Text('Удалить сообщение?'),
+        content: const Text('Сообщение будет удалено для всех.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(dialogCtx).pop(false), child: const Text('Отмена')),
+          TextButton(onPressed: () => Navigator.of(dialogCtx).pop(true), child: const Text('Удалить')),
+        ],
+      ),
+    );
+    if (confirmed == true && mounted) {
+      try {
+        final service = ref.read(chatsServiceProvider);
+        await service.deleteGroupMessage(groupId, messageId);
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Не удалось удалить: $e')),
+          );
+        }
+      }
     }
   }
 
-  /// Upload and send raw image bytes obtained from clipboard paste.
-  Future<void> _sendPastedImage(Uint8List imageBytes) async {
-    if (_sending) return;
-
-    setState(() => _sending = true);
-    final messenger = ScaffoldMessenger.of(context);
-    try {
-      final service = ref.read(chatsServiceProvider);
-
-      // Detect MIME type from magic bytes.
-      String mimeType = 'image/png';
-      String filename = 'pasted_image.png';
-      if (imageBytes.length >= 3 &&
-          imageBytes[0] == 0xFF &&
-          imageBytes[1] == 0xD8 &&
-          imageBytes[2] == 0xFF) {
-        mimeType = 'image/jpeg';
-        filename = 'pasted_image.jpg';
-      } else if (imageBytes.length >= 4 &&
-          imageBytes[0] == 0x52 &&
-          imageBytes[1] == 0x49 &&
-          imageBytes[2] == 0x46 &&
-          imageBytes[3] == 0x46) {
-        mimeType = 'image/webp';
-        filename = 'pasted_image.webp';
+  Future<void> _confirmDeletePersonalMessage(BuildContext ctx, String otherUserId, String messageId) async {
+    final confirmed = await showDialog<bool>(
+      context: ctx,
+      builder: (dialogCtx) => AlertDialog(
+        title: const Text('Удалить сообщение?'),
+        content: const Text('Сообщение будет удалено для всех.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(dialogCtx).pop(false), child: const Text('Отмена')),
+          TextButton(onPressed: () => Navigator.of(dialogCtx).pop(true), child: const Text('Удалить')),
+        ],
+      ),
+    );
+    if (confirmed == true && mounted) {
+      try {
+        final service = ref.read(chatsServiceProvider);
+        await service.deletePersonalMessage(otherUserId, messageId);
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Не удалось удалить: $e')),
+          );
+        }
       }
-
-      final upload = await service.uploadChatImageFromBytes(
-        imageBytes,
-        compressed: true,
-        filename: filename,
-        contentType: mimeType,
-      );
-
-      final textToAttach = _inputCtrl.text.trim();
-      if (widget._isGroup) {
-        await ref
-            .read(groupChatProvider(GroupChatKey(widget.groupId!, widget.noteId))
-                .notifier)
-            .send(
-              body: textToAttach.isNotEmpty ? textToAttach : null,
-              imageUrl: upload['url'] as String?,
-              imageMimeType: upload['mimeType'] as String?,
-              imageSize: (upload['fileSize'] as num?)?.toInt(),
-              imageCompressed: upload['compressed'] as bool?,
-            );
-      } else {
-        await ref.read(personalChatProvider(widget.userId!).notifier).send(
-              body: textToAttach.isNotEmpty ? textToAttach : null,
-              imageUrl: upload['url'] as String?,
-              imageMimeType: upload['mimeType'] as String?,
-              imageSize: (upload['fileSize'] as num?)?.toInt(),
-              imageCompressed: upload['compressed'] as bool?,
-            );
-      }
-      _inputCtrl.clear();
-      if (_scrollCtrl.hasClients) {
-        _scrollCtrl.animateTo(
-          0,
-          duration: const Duration(milliseconds: 200),
-          curve: Curves.easeOut,
-        );
-      }
-    } catch (e) {
-      messenger.showSnackBar(
-        SnackBar(content: Text('Не удалось отправить изображение: $e')),
-      );
-    } finally {
-      if (mounted) setState(() => _sending = false);
     }
   }
 
@@ -595,48 +557,48 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         ),
       );
     }
+    // Build items list with date separators (list is reverse=true)
+    // messages[0] = newest, messages[n-1] = oldest
+    final items = <Widget>[];
+    for (var i = 0; i < messages.length; i++) {
+      final m = messages[i];
+      final mine = m.senderId == meId;
+      items.add(_MessageBubble(
+        body: m.body,
+        imageUrl: _resolveImageUrl(m.imageUrl),
+        time: m.createdAt,
+        mine: mine,
+        isDeleted: m.isDeleted,
+        authorName: mine ? null : _displayName(m.sender),
+        noteTitle: m.noteTitle,
+        noteColorLabel: m.noteColorLabel,
+        onNoteTap: (m.noteId != null && widget.noteId == null)
+            ? () => context.push(
+                  '/chats/note/${m.noteId}?groupId=${widget.groupId}&title=${Uri.encodeComponent(m.noteTitle ?? 'Заметка')}&groupTitle=${Uri.encodeComponent(widget.title)}',
+                )
+            : null,
+        onDelete: mine && !m.isDeleted
+            ? () => _confirmDeleteGroupMessage(context, widget.groupId!, m.id)
+            : null,
+      ));
+      // Add separator between this message and the next older message
+      if (i + 1 < messages.length) {
+        final curr = m.createdAt.toLocal();
+        final next = messages[i + 1].createdAt.toLocal();
+        if (curr.year != next.year || curr.month != next.month || curr.day != next.day) {
+          items.add(_DateSeparator(date: curr));
+        }
+      } else {
+        // Add separator before the oldest message
+        items.add(_DateSeparator(date: m.createdAt.toLocal()));
+      }
+    }
     return ListView.builder(
       controller: _scrollCtrl,
       reverse: true,
-      padding: const EdgeInsets.fromLTRB(
-        AppSpacing.lg,
-        AppSpacing.lg,
-        AppSpacing.lg,
-        _composerListInset,
-      ),
-      itemCount: messages.length,
-      itemBuilder: (context, i) {
-        final m = messages[i];
-        final mine = m.senderId == meId;
-        return _MessageBubble(
-          body: m.body,
-          imageUrl: _resolveImageUrl(m.imageUrl),
-          time: m.createdAt,
-          mine: mine,
-          authorName: mine ? null : _displayName(m.sender),
-          authorTap: mine
-              ? null
-              : () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => ChatUserProfileScreen(userId: m.senderId),
-                    ),
-                  );
-                },
-          deliveryStatus: mine
-              ? (m.readCount > 0
-                  ? _MessageDeliveryStatus.read
-                  : _MessageDeliveryStatus.sent)
-              : null,
-          noteTitle: m.noteTitle,
-          noteColorLabel: m.noteColorLabel,
-          onNoteTap: (m.noteId != null && widget.noteId == null)
-              ? () => context.push(
-                    '/chats/note/${m.noteId}?groupId=${widget.groupId}&title=${Uri.encodeComponent(m.noteTitle ?? 'Заметка')}&groupTitle=${Uri.encodeComponent(widget.title)}',
-                  )
-              : null,
-        );
-      },
+      padding: const EdgeInsets.all(AppSpacing.lg),
+      itemCount: items.length,
+      itemBuilder: (context, i) => items[i],
     );
   }
 
@@ -657,149 +619,109 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         ),
       );
     }
+    final items = <Widget>[];
+    for (var i = 0; i < messages.length; i++) {
+      final m = messages[i];
+      final mine = m.senderId == meId;
+      items.add(_MessageBubble(
+        body: m.body,
+        imageUrl: _resolveImageUrl(m.imageUrl),
+        time: m.createdAt,
+        mine: mine,
+        isDeleted: m.isDeleted,
+        authorName: null,
+        onDelete: mine && !m.isDeleted
+            ? () => _confirmDeletePersonalMessage(context, widget.userId!, m.id)
+            : null,
+      ));
+      if (i + 1 < messages.length) {
+        final curr = m.createdAt.toLocal();
+        final next = messages[i + 1].createdAt.toLocal();
+        if (curr.year != next.year || curr.month != next.month || curr.day != next.day) {
+          items.add(_DateSeparator(date: curr));
+        }
+      } else {
+        items.add(_DateSeparator(date: m.createdAt.toLocal()));
+      }
+    }
     return ListView.builder(
       controller: _scrollCtrl,
       reverse: true,
-      padding: const EdgeInsets.fromLTRB(
-        AppSpacing.lg,
-        AppSpacing.lg,
-        AppSpacing.lg,
-        _composerListInset,
-      ),
-      itemCount: messages.length,
-      itemBuilder: (context, i) {
-        final m = messages[i];
-        final mine = m.senderId == meId;
-        return _MessageBubble(
-          body: m.body,
-          imageUrl: _resolveImageUrl(m.imageUrl),
-          time: m.createdAt,
-          mine: mine,
-          authorName: null,
-          deliveryStatus: mine
-              ? (m.readAt != null ? _MessageDeliveryStatus.read : _MessageDeliveryStatus.sent)
-              : null,
-        );
-      },
+      padding: const EdgeInsets.all(AppSpacing.lg),
+      itemCount: items.length,
+      itemBuilder: (context, i) => items[i],
     );
   }
 
   Widget _buildComposer(BuildContext context) {
-    final hasText = _hasComposerText;
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: _composerHorizontalGap),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(16),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-          child: Container(
-            decoration: BoxDecoration(
-              color: AppColors.bg2.withValues(alpha: 0.75),
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(
-                color: Colors.white.withValues(alpha: 0.06),
-                width: 1,
+    final hasText = _inputCtrl.text.trim().isNotEmpty;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
+      decoration: const BoxDecoration(
+        border: Border(top: BorderSide(color: AppColors.borderSubtle)),
+      ),
+      child: Row(
+        children: [
+          // Left: gallery icon always visible
+          IconButton(
+            icon: const Icon(SolarIconsOutline.gallery),
+            tooltip: 'Изображения',
+            onPressed: _sending ? null : _pickAndSendImages,
+          ),
+          Expanded(
+            child: TextField(
+              controller: _inputCtrl,
+              minLines: 1,
+              maxLines: 5,
+              textInputAction: TextInputAction.send,
+              onSubmitted: (_) => _send(),
+              onChanged: (_) => setState(() {}),
+              decoration: const InputDecoration(
+                hintText: 'Сообщение',
+                filled: true,
               ),
             ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 6),
-                  child: IconButton(
-                    icon: Icon(
-                      hasText
-                          ? Icons.emoji_emotions_outlined
-                          : SolarIconsOutline.gallery,
-                      color: AppColors.fgSoft,
-                    ),
-                    tooltip: hasText ? 'Эмодзи' : 'Изображения',
-                    onPressed: _sending
-                        ? null
-                        : (hasText ? _openSystemEmojiKeyboard : _pickAndSendImages),
-                  ),
-                ),
-                Expanded(
-                  child: TextField(
-                    controller: _inputCtrl,
-                    focusNode: _composerFocusNode,
-                    minLines: 1,
-                    maxLines: 5,
-                    textInputAction: TextInputAction.send,
-                    style: const TextStyle(color: AppColors.white),
-                    cursorColor: AppColors.white,
-                    onChanged: (value) {
-                      final nowHasText = value.trim().isNotEmpty;
-                      if (nowHasText != hasText) {
-                        setState(() {});
-                      }
-
-                      if (!nowHasText) {
-                        // Field cleared — stop typing immediately.
-                        _typingDebounce?.cancel();
-                        _typingDebounce = null;
-                        _sendTypingStop();
-                        return;
-                      }
-
-                      final ws = ref.read(wsClientProvider);
-                      if (widget.groupId != null) {
-                        ws.sendChatTypingGroup(widget.groupId!);
-                      } else if (widget.userId != null) {
-                        ws.sendChatTypingPersonal(widget.userId!);
-                      }
-
-                      // Schedule typing_stop after 2s of inactivity.
-                      _typingDebounce?.cancel();
-                      _typingDebounce = Timer(const Duration(seconds: 2), () {
-                        _typingDebounce = null;
-                        _sendTypingStop();
-                      });
-                    },
-                    onSubmitted: (_) => _send(),
-                    decoration: const InputDecoration(
-                      hintText: 'Сообщение...',
-                      hintStyle: TextStyle(color: AppColors.fgSoft),
-                      border: InputBorder.none,
-                      isDense: true,
-                      contentPadding: EdgeInsets.fromLTRB(0, 10, 0, 10),
-                    ),
-                  ),
-                ),
-                if (hasText)
-                  Padding(
-                    padding: const EdgeInsets.only(right: 6, bottom: 6),
-                    child: Material(
-                      color: AppColors.white,
-                      shape: const CircleBorder(),
-                      child: InkWell(
-                        customBorder: const CircleBorder(),
-                        onTap: _sending ? null : _send,
-                        child: Padding(
-                          padding: const EdgeInsets.all(10),
-                          child: _sending
-                              ? const SizedBox(
-                                  width: 18,
-                                  height: 18,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    color: AppColors.fgContainer,
-                                  ),
-                                )
-                              : const Icon(
-                                  Icons.arrow_upward_rounded,
-                                  color: AppColors.fgContainer,
-                                  size: 20,
-                                ),
-                        ),
-                      ),
-                    ),
-                  ),
-              ],
-            ),
           ),
-        ),
+          const SizedBox(width: 8),
+          // Right: mic when empty, send when text entered
+          if (hasText)
+            Material(
+              color: AppColors.white,
+              shape: const CircleBorder(),
+              child: InkWell(
+                customBorder: const CircleBorder(),
+                onTap: _sending ? null : _send,
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: _sending
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: AppColors.fgContainer,
+                          ),
+                        )
+                      : const Icon(
+                          SolarIconsBold.plain,
+                          color: AppColors.fgContainer,
+                          size: 20,
+                        ),
+                ),
+              ),
+            )
+          else
+            // Mic icon stub (no recording yet)
+            IconButton(
+              icon: const Icon(Icons.mic_outlined, color: AppColors.fgSoft),
+              tooltip: 'Голосовое сообщение (скоро)',
+              onPressed: () {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Голосовые сообщения — скоро')),
+                );
+              },
+            ),
+        ],
       ),
     );
   }
@@ -828,6 +750,8 @@ class _MessageBubble extends StatelessWidget {
   final String? noteTitle;
   final String? noteColorLabel;
   final VoidCallback? onNoteTap;
+  final bool isDeleted;
+  final VoidCallback? onDelete;
 
   const _MessageBubble({
     required this.body,
@@ -840,101 +764,48 @@ class _MessageBubble extends StatelessWidget {
     this.noteTitle,
     this.noteColorLabel,
     this.onNoteTap,
+    this.isDeleted = false,
+    this.onDelete,
   });
 
   bool get _isImageOnly => imageUrl != null && body.trim().isEmpty;
 
   @override
   Widget build(BuildContext context) {
-    final formatter = DateFormat('HH:mm');
-    final bg = mine ? AppColors.white : AppColors.bg2;
-    final fg = mine ? AppColors.fgContainer : AppColors.white;
-    final parsedNoteColor = _safeColor(noteColorLabel);
-    final hasOutsideStatus = deliveryStatus != null;
-
-    if (_isImageOnly) {
+    if (isDeleted) {
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 4),
         child: Row(
-          mainAxisAlignment:
-              mine ? MainAxisAlignment.end : MainAxisAlignment.start,
+          mainAxisAlignment: mine ? MainAxisAlignment.end : MainAxisAlignment.start,
           children: [
-            if (mine && hasOutsideStatus) ...[
-              _outsideDeliveryIndicator(),
-              const SizedBox(width: 6),
-            ],
-            Flexible(
-              child: ConstrainedBox(
-                constraints: BoxConstraints(
-                  maxWidth: MediaQuery.of(context).size.width * 0.75,
-                ),
-                child: Column(
-                  crossAxisAlignment:
-                      mine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (authorName != null)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 4, left: 4),
-                        child: GestureDetector(
-                          onTap: authorTap,
-                          child: Text(
-                            authorName!,
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w600,
-                              color: AppColors.fgSoft.withValues(alpha: 0.75),
-                            ),
-                          ),
-                        ),
-                      ),
-                    GestureDetector(
-                      onTap: () {
-                        Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (_) =>
-                                ChatImageViewerScreen(imageUrl: imageUrl!),
-                          ),
-                        );
-                      },
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(AppRadii.md),
-                        child: Image.network(
-                          imageUrl!,
-                          width: 220,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => Container(
-                            width: 220,
-                            height: 120,
-                            color: AppColors.bg2,
-                            alignment: Alignment.center,
-                            child:
-                                const Icon(SolarIconsOutline.galleryRemove),
-                          ),
-                        ),
-                      ),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.only(top: 4, left: 4),
-                      child: _metaRow(
-                        formatter: formatter,
-                        fg: AppColors.fgSoft.withValues(alpha: 0.7),
-                      ),
-                    ),
-                  ],
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: AppColors.bg2,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppColors.fgSoft.withValues(alpha: 0.2)),
+              ),
+              child: Text(
+                'Сообщение удалено',
+                style: TextStyle(
+                  color: AppColors.fgSoft.withValues(alpha: 0.6),
+                  fontSize: 14,
+                  fontStyle: FontStyle.italic,
                 ),
               ),
             ),
-            if (!mine && hasOutsideStatus) ...[
-              const SizedBox(width: 6),
-              _outsideDeliveryIndicator(),
-            ],
           ],
         ),
       );
     }
 
-    return Padding(
+    final formatter = DateFormat('HH:mm');
+    final bg = mine ? AppColors.white : AppColors.bg2;
+    final fg = mine ? AppColors.fgContainer : AppColors.white;
+    final parsedNoteColor = _safeColor(noteColorLabel);
+    return GestureDetector(
+      onLongPress: (mine && onDelete != null) ? onDelete : null,
+      child: Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
         mainAxisAlignment:
@@ -1057,7 +928,7 @@ class _MessageBubble extends StatelessWidget {
           ],
         ],
       ),
-    );
+    ));
   }
 
   Widget _outsideDeliveryIndicator() {
@@ -1107,188 +978,57 @@ class _MessageBubble extends StatelessWidget {
   }
 }
 
-/// Slim animated strip that appears between the message list and the input bar
-/// while someone is typing. Fades and slides in/out smoothly.
-class _TypingStrip extends StatelessWidget {
-  final String? label;
+class _DateSeparator extends StatelessWidget {
+  final DateTime date;
 
-  const _TypingStrip({required this.label});
+  const _DateSeparator({required this.date});
 
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedSize(
-      duration: const Duration(milliseconds: 200),
-      curve: Curves.easeOut,
-      child: AnimatedSwitcher(
-        duration: const Duration(milliseconds: 200),
-        transitionBuilder: (child, animation) {
-          return FadeTransition(
-            opacity: animation,
-            child: SlideTransition(
-              position: Tween<Offset>(
-                begin: const Offset(0, 0.5),
-                end: Offset.zero,
-              ).animate(animation),
-              child: child,
-            ),
-          );
-        },
-        child: label == null
-            ? const SizedBox.shrink(key: ValueKey('empty'))
-            : Container(
-                key: const ValueKey('typing'),
-                width: double.infinity,
-                padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
-                decoration: const BoxDecoration(
-                  border: Border(
-                    top: BorderSide(color: AppColors.borderSubtle),
-                  ),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const TypingIndicator(dotSize: 5),
-                    const SizedBox(width: 6),
-                    Flexible(
-                      child: Text(
-                        label!,
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: AppColors.fgSoft,
-                        ),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-      ),
-    );
+  String _label() {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final yesterday = today.subtract(const Duration(days: 1));
+    final d = DateTime(date.year, date.month, date.day);
+
+    if (d == today) return 'Сегодня';
+    if (d == yesterday) return 'Вчера';
+
+    final year = date.year;
+    final month = _monthName(date.month);
+    final day = date.day;
+
+    if (year == now.year) return '$day $month';
+    return '${day.toString().padLeft(2, '0')}.${date.month.toString().padLeft(2, '0')}.$year';
   }
-}
 
-class _TypingUser {
-  final String name;
-  final Timer timer;
-
-  _TypingUser({required this.name, required this.timer});
-}
-
-enum _MessageDeliveryStatus { sent, read }
-
-// ─── Personal chat AppBar helpers ────────────────────────────────────────────
-
-/// CircleAvatar with a small online-dot badge for the personal chat AppBar.
-class _PeerAvatarWithDot extends StatelessWidget {
-  final ChatUserProfile? profile;
-  final String title;
-  final String? Function(String?) resolveUrl;
-
-  const _PeerAvatarWithDot({
-    required this.profile,
-    required this.title,
-    required this.resolveUrl,
-  });
+  String _monthName(int month) {
+    const names = [
+      '', 'января', 'февраля', 'марта', 'апреля', 'мая', 'июня',
+      'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря',
+    ];
+    return names[month];
+  }
 
   @override
   Widget build(BuildContext context) {
-    final avatarUrl = resolveUrl(profile?.avatarUrl);
-    final initials = (profile?.displayLabel ?? title).isNotEmpty
-        ? (profile?.displayLabel ?? title)[0].toUpperCase()
-        : '?';
-
-    return SizedBox(
-      width: 36,
-      height: 36,
-      child: Stack(
-        children: [
-          CircleAvatar(
-            radius: 18,
-            backgroundImage: avatarUrl != null ? NetworkImage(avatarUrl) : null,
-            backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
-            child: avatarUrl == null
-                ? Text(initials, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600))
-                : null,
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      child: Center(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+          decoration: BoxDecoration(
+            color: AppColors.bg2.withValues(alpha: 0.8),
+            borderRadius: BorderRadius.circular(999),
           ),
-          Positioned(
-            right: 0,
-            bottom: 0,
-            child: Container(
-              width: 11,
-              height: 11,
-              decoration: BoxDecoration(
-                color: (profile?.isOnline ?? false)
-                    ? const Color(0xFF4CAF50)
-                    : Colors.grey,
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: Theme.of(context).scaffoldBackgroundColor,
-                  width: 2,
-                ),
-              ),
+          child: Text(
+            _label(),
+            style: const TextStyle(
+              color: AppColors.fgSoft,
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
             ),
           ),
-        ],
+        ),
       ),
     );
-  }
-}
-
-/// Subtitle text: "В сети" or "Был(а) X мин/ч назад" for personal chat AppBar.
-class _PeerOnlineSubtitle extends StatelessWidget {
-  final ChatUserProfile? profile;
-
-  const _PeerOnlineSubtitle({required this.profile});
-
-  @override
-  Widget build(BuildContext context) {
-    final subtitleStyle = TextStyle(
-      fontSize: 11,
-      color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.65),
-    );
-
-    if (profile == null) {
-      return const SizedBox.shrink();
-    }
-
-    if (profile!.isOnline) {
-      return Text(
-        'В сети',
-        style: subtitleStyle.copyWith(color: const Color(0xFF4CAF50)),
-      );
-    }
-
-    final lastSeen = profile!.lastSeenAt;
-    if (lastSeen == null) {
-      return Text('Не в сети', style: subtitleStyle);
-    }
-
-    final diff = DateTime.now().difference(lastSeen);
-    final String ago;
-    if (diff.inMinutes < 1) {
-      ago = 'только что';
-    } else if (diff.inMinutes < 60) {
-      ago = '${diff.inMinutes} мин назад';
-    } else if (diff.inHours < 24) {
-      final h = diff.inHours;
-      ago = '$h ${_hoursLabel(h)} назад';
-    } else {
-      final d = diff.inDays;
-      ago = '$d ${_daysLabel(d)} назад';
-    }
-
-    return Text('Был(а) $ago', style: subtitleStyle);
-  }
-
-  static String _hoursLabel(int h) {
-    if (h % 10 == 1 && h % 100 != 11) return 'ч';
-    if (h % 10 >= 2 && h % 10 <= 4 && (h % 100 < 10 || h % 100 >= 20)) return 'ч';
-    return 'ч';
-  }
-
-  static String _daysLabel(int d) {
-    if (d % 10 == 1 && d % 100 != 11) return 'день';
-    if (d % 10 >= 2 && d % 10 <= 4 && (d % 100 < 10 || d % 100 >= 20)) return 'дня';
-    return 'дней';
   }
 }

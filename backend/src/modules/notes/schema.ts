@@ -29,6 +29,8 @@ export const notesQuerySchema = z.object({
   search: z.string().optional(),
   archived: z.enum(['true', 'false']).optional(),
   personal: z.enum(['true', 'false']).optional(),
+  limit: z.string().optional().transform((v) => (v ? Math.min(parseInt(v, 10), 200) : 50)),
+  cursor: z.string().optional(), // ISO date cursor for pagination
 })
 
 export const moveNoteSchema = z

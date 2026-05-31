@@ -81,41 +81,11 @@ class WsHelloEvent extends WsEvent {
   const WsHelloEvent(this.userId);
 }
 
-/// Emitted when the WS client reconnects after a connection drop.
-/// Providers should refetch their data when they receive this event,
-/// because messages may have been missed during the disconnect.
-class WsReconnectedEvent extends WsEvent {
-  const WsReconnectedEvent();
-}
-
-class NotePresenceEvent extends WsEvent {
-  final String noteId;
-  final String userId;
-  final String displayName;
-  final String action; // 'join' | 'leave'
-  const NotePresenceEvent({
-    required this.noteId,
-    required this.userId,
-    required this.displayName,
-    required this.action,
-  });
-}
-
-class NoteTypingEvent extends WsEvent {
-  final String noteId;
-  final String userId;
-  const NoteTypingEvent({required this.noteId, required this.userId});
-}
-
-class UserOnlineStatusEvent extends WsEvent {
-  final String userId;
-  final bool isOnline;
-  final DateTime? lastSeenAt;
-  const UserOnlineStatusEvent({
-    required this.userId,
-    required this.isOnline,
-    this.lastSeenAt,
-  });
+class MessageDeletedEvent extends WsEvent {
+  final String kind; // 'group' or 'personal'
+  final String messageId;
+  final Map<String, dynamic> data;
+  const MessageDeletedEvent({required this.kind, required this.messageId, required this.data});
 }
 
 /// WebSocket-клиент с auto-reconnect.
@@ -203,6 +173,11 @@ class WsClient {
         } else if (kind == 'personal') {
           _eventsController.add(PersonalMessageEvent(data));
         }
+      } else if (type == 'message_deleted') {
+        final kind = json['kind'] as String? ?? 'group';
+        final data = json['data'] as Map<String, dynamic>;
+        final messageId = data['id']?.toString() ?? '';
+        _eventsController.add(MessageDeletedEvent(kind: kind, messageId: messageId, data: data));
       } else if (type == 'notification') {
         final data = json['data'] as Map<String, dynamic>;
         _eventsController.add(PushNotificationEvent(
