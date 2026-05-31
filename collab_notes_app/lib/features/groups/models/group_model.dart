@@ -140,6 +140,10 @@ class GroupModel {
   final bool isPersonal;
   final List<GroupMemberModel> members;
   final GroupLastMessageModel? lastMessage;
+  // TODO(B17): Backend should add unreadCount to buildGroupPayload
+  // (COUNT of messages where user is not in reads array).
+  // For now defaults to 0 — badge will show once backend support is added.
+  final int unreadCount;
 
   const GroupModel({
     required this.id,
@@ -148,6 +152,7 @@ class GroupModel {
     required this.isPersonal,
     required this.members,
     required this.lastMessage,
+    this.unreadCount = 0,
   });
 
   factory GroupModel.fromJson(Map<String, dynamic> json) => GroupModel(
@@ -161,5 +166,6 @@ class GroupModel {
         lastMessage: json['lastMessage'] is Map<String, dynamic>
             ? GroupLastMessageModel.fromJson(json['lastMessage'] as Map<String, dynamic>)
             : null,
+        unreadCount: (json['unreadCount'] as num?)?.toInt() ?? 0,
       );
 }

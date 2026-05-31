@@ -8,6 +8,7 @@ import 'package:go_router/go_router.dart';
 import 'package:solar_icons/solar_icons.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../features/chats/providers/chats_provider.dart';
 import '../../features/groups/providers/groups_provider.dart';
 import '../../features/notes/providers/notes_provider.dart';
 import '../../features/updates/providers/update_provider.dart';
@@ -112,6 +113,16 @@ class _MainShellState extends ConsumerState<MainShell> {
     }
   }
 
+  /// Total unread count across personal + group conversations.
+  int _totalUnread(WidgetRef ref) {
+    final personalList = ref.watch(personalConversationsProvider).valueOrNull ?? [];
+    final personalUnread = personalList.fold<int>(0, (sum, c) => sum + c.unreadCount);
+    // TODO(B17): Add group unread counts once backend provides them
+    final groupsList = ref.watch(groupsProvider).valueOrNull ?? [];
+    final groupUnread = groupsList.fold<int>(0, (sum, g) => sum + g.unreadCount);
+    return personalUnread + groupUnread;
+  }
+
   @override
   Widget build(BuildContext context) {
     final updateInfo = ref.watch(updateCheckProvider).valueOrNull;
@@ -178,13 +189,22 @@ class _MainShellState extends ConsumerState<MainShell> {
                       final index = entry.key;
                       final tab = entry.value;
                       final isActive = index == (currentIndex < 0 ? 0 : currentIndex);
+                      // Compute unread badge for Chats tab (index 1)
+                      final badgeCount = index == 1 ? _totalUnread(ref) : 0;
                       return SizedBox(
                         width: 56,
                         height: 48,
                         child: IconButton(
-                          icon: Icon(
-                            isActive ? tab.activeIcon : tab.icon,
-                            size: 22,
+                          icon: Badge(
+                            isLabelVisible: badgeCount > 0,
+                            label: Text(
+                              badgeCount > 99 ? '99+' : badgeCount.toString(),
+                              style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w700),
+                            ),
+                            child: Icon(
+                              isActive ? tab.activeIcon : tab.icon,
+                              size: 22,
+                            ),
                           ),
                           color: isActive ? AppColors.white : AppColors.fgSoft,
                           tooltip: tab.label,

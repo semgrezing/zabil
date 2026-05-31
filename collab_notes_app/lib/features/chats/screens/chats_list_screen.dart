@@ -180,6 +180,7 @@ class _UnifiedChatList extends ConsumerWidget {
               timeLabel: message?.createdAt == null
                   ? null
                   : DateFormat('HH:mm').format(message!.createdAt!.toLocal()),
+              unreadCount: g.unreadCount,
               onTap: () => context.push(
                 '/chats/group/${g.id}?title=${Uri.encodeComponent(g.title)}',
               ),
@@ -317,6 +318,7 @@ class _GroupConversationCard extends StatelessWidget {
   final String? senderName;
   final String previewText;
   final String? timeLabel;
+  final int unreadCount;
   final VoidCallback onTap;
 
   const _GroupConversationCard({
@@ -325,6 +327,7 @@ class _GroupConversationCard extends StatelessWidget {
     required this.senderName,
     required this.previewText,
     required this.timeLabel,
+    this.unreadCount = 0,
     required this.onTap,
   });
 
@@ -378,14 +381,26 @@ class _GroupConversationCard extends StatelessWidget {
                       ],
                     ),
                     const SizedBox(height: 2),
-                    Text(
-                      senderName != null ? '$senderName: $previewText' : previewText,
-                      style: const TextStyle(
-                        fontSize: 13,
-                        color: AppColors.fgSoft,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            senderName != null ? '$senderName: $previewText' : previewText,
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: unreadCount > 0
+                                  ? AppColors.white
+                                  : AppColors.fgSoft,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        if (unreadCount > 0) ...[
+                          const SizedBox(width: 8),
+                          _UnreadBadge(count: unreadCount),
+                        ],
+                      ],
                     ),
                   ],
                 ),
