@@ -64,7 +64,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   final Map<String, _TypingUser> _typingUsers = {};
   Timer? _typingDebounce;
 
-  static const double _composerBottomGap = 8;
+  // Composer handles its own bottom padding (keyboard + safe area)
   static const double _composerHorizontalGap = 12;
   static const double _composerListInset = 120;
 
@@ -481,22 +481,90 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               left: 0,
               right: 0,
               bottom: 0,
-              child: SafeArea(
-                top: false,
-                minimum: const EdgeInsets.only(bottom: _composerBottomGap),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    _TypingStrip(label: _typingLabel),
-                    _buildComposer(context),
-                  ],
-                ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _TypingStrip(label: _typingLabel),
+                  _buildComposer(context),
+                ],
               ),
             ),
           ],
         ),
       ),
     );
+  }
+
+  /// Handle Ctrl+V paste on desktop: check clipboard for image bytes.
+  Future<void> _handleDesktopPaste() async {
+    if (_sending || !_isDesktop) return;
+    try {
+      final imageBytes = await Pasteboard.image;
+      if (imageBytes == null || imageBytes.isEmpty) return;
+      await _sendPastedImage(imageBytes);
+    } catch (_) {
+      // Clipboard did not contain an image — let TextField handle as text.
+    }
+  }
+
+  /// Upload and send raw image bytes obtained from clipboard paste.
+  Future<void> _sendPastedImage(Uint8List imageBytes) async {
+    if (_sending) return;
+    setState(() => _sending = true);
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final service = ref.read(chatsServiceProvider);
+      String mimeType = 'image/png';
+      String filename = 'pasted_image.png';
+      if (imageBytes.length >= 3 &&
+          imageBytes[0] == 0xFF &&
+          imageBytes[1] == 0xD8 &&
+          imageBytes[2] == 0xFF) {
+        mimeType = 'image/jpeg';
+        filename = 'pasted_image.jpg';
+      } else if (imageBytes.length >= 4 &&
+          imageBytes[0] == 0x52 &&
+          imageBytes[1] == 0x49 &&
+          imageBytes[2] == 0x46 &&
+          imageBytes[3] == 0x46) {
+        mimeType = 'image/webp';
+        filename = 'pasted_image.webp';
+      }
+      final upload = await service.uploadChatImageFromBytes(
+        imageBytes,
+        compressed: true,
+        filename: filename,
+        contentType: mimeType,
+      );
+      final textToAttach = _inputCtrl.text.trim();
+      if (widget._isGroup) {
+        await ref
+            .read(groupChatProvider(GroupChatKey(widget.groupId!, widget.noteId)).notifier)
+            .send(
+              body: textToAttach.isNotEmpty ? textToAttach : null,
+              imageUrl: upload['url'] as String?,
+              imageMimeType: upload['mimeType'] as String?,
+              imageSize: (upload['fileSize'] as num?)?.toInt(),
+              imageCompressed: upload['compressed'] as bool?,
+            );
+      } else {
+        await ref.read(personalChatProvider(widget.userId!).notifier).send(
+              body: textToAttach.isNotEmpty ? textToAttach : null,
+              imageUrl: upload['url'] as String?,
+              imageMimeType: upload['mimeType'] as String?,
+              imageSize: (upload['fileSize'] as num?)?.toInt(),
+              imageCompressed: upload['compressed'] as bool?,
+            );
+      }
+      _inputCtrl.clear();
+      if (_scrollCtrl.hasClients) {
+        _scrollCtrl.animateTo(0, duration: const Duration(milliseconds: 200), curve: Curves.easeOut);
+      }
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text('Не удалось отправить изображение: $e')));
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
   }
 
   /// On desktop, wrap the body with a Focus widget that intercepts Ctrl+V
@@ -596,7 +664,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     return ListView.builder(
       controller: _scrollCtrl,
       reverse: true,
-      padding: const EdgeInsets.all(AppSpacing.lg),
+      padding: const EdgeInsets.fromLTRB(AppSpacing.lg, AppSpacing.lg, AppSpacing.lg, 80),
       itemCount: items.length,
       itemBuilder: (context, i) => items[i],
     );
@@ -647,7 +715,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     return ListView.builder(
       controller: _scrollCtrl,
       reverse: true,
-      padding: const EdgeInsets.all(AppSpacing.lg),
+      padding: const EdgeInsets.fromLTRB(AppSpacing.lg, AppSpacing.lg, AppSpacing.lg, 80),
       itemCount: items.length,
       itemBuilder: (context, i) => items[i],
     );
@@ -655,73 +723,131 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
   Widget _buildComposer(BuildContext context) {
     final hasText = _inputCtrl.text.trim().isNotEmpty;
-    return Container(
-      padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
-      decoration: const BoxDecoration(
-        border: Border(top: BorderSide(color: AppColors.borderSubtle)),
-      ),
-      child: Row(
-        children: [
-          // Left: gallery icon always visible
-          IconButton(
-            icon: const Icon(SolarIconsOutline.gallery),
-            tooltip: 'Изображения',
-            onPressed: _sending ? null : _pickAndSendImages,
-          ),
-          Expanded(
-            child: TextField(
-              controller: _inputCtrl,
-              minLines: 1,
-              maxLines: 5,
-              textInputAction: TextInputAction.send,
-              onSubmitted: (_) => _send(),
-              onChanged: (_) => setState(() {}),
-              decoration: const InputDecoration(
-                hintText: 'Сообщение',
-                filled: true,
+    final media = MediaQuery.of(context);
+    final keyboard = media.viewInsets.bottom;
+    final bottomPad = keyboard > 0 ? keyboard + 8 : media.padding.bottom + 8;
+
+    return Padding(
+      padding: EdgeInsets.fromLTRB(12, 8, 12, bottomPad),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+          child: Container(
+            decoration: BoxDecoration(
+              color: AppColors.bg2.withValues(alpha: 0.75),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: Colors.white.withValues(alpha: 0.06),
+                width: 1,
               ),
             ),
-          ),
-          const SizedBox(width: 8),
-          // Right: mic when empty, send when text entered
-          if (hasText)
-            Material(
-              color: AppColors.white,
-              shape: const CircleBorder(),
-              child: InkWell(
-                customBorder: const CircleBorder(),
-                onTap: _sending ? null : _send,
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: _sending
-                      ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: AppColors.fgContainer,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                // Gallery button
+                Padding(
+                  padding: const EdgeInsets.only(left: 4, bottom: 2),
+                  child: IconButton(
+                    icon: const Icon(SolarIconsOutline.gallery, size: 20),
+                    color: AppColors.fgSoft,
+                    tooltip: 'Изображения',
+                    onPressed: _sending ? null : _pickAndSendImages,
+                  ),
+                ),
+                // Ghost text field
+                Expanded(
+                  child: TextField(
+                    controller: _inputCtrl,
+                    focusNode: _composerFocusNode,
+                    minLines: 1,
+                    maxLines: 5,
+                    textInputAction: TextInputAction.send,
+                    style: const TextStyle(color: AppColors.white, fontSize: 15),
+                    cursorColor: AppColors.white,
+                    onSubmitted: (_) => _send(),
+                    onChanged: (value) {
+                      final nowHasText = value.trim().isNotEmpty;
+                      if (nowHasText != hasText) setState(() {});
+
+                      if (!nowHasText) {
+                        _typingDebounce?.cancel();
+                        _typingDebounce = null;
+                        _sendTypingStop();
+                        return;
+                      }
+
+                      final ws = ref.read(wsClientProvider);
+                      if (widget.groupId != null) {
+                        ws.sendChatTypingGroup(widget.groupId!);
+                      } else if (widget.userId != null) {
+                        ws.sendChatTypingPersonal(widget.userId!);
+                      }
+
+                      _typingDebounce?.cancel();
+                      _typingDebounce = Timer(const Duration(seconds: 2), () {
+                        _typingDebounce = null;
+                        _sendTypingStop();
+                      });
+                    },
+                    decoration: const InputDecoration(
+                      hintText: 'Сообщение...',
+                      hintStyle: TextStyle(color: AppColors.fgSoft, fontSize: 15),
+                      border: InputBorder.none,
+                      enabledBorder: InputBorder.none,
+                      focusedBorder: InputBorder.none,
+                      contentPadding: EdgeInsets.symmetric(vertical: 12),
+                      isDense: true,
+                      filled: false,
+                    ),
+                  ),
+                ),
+                // Right: mic (empty) or send (text)
+                Padding(
+                  padding: const EdgeInsets.only(right: 4, bottom: 2),
+                  child: hasText
+                      ? Material(
+                          color: AppColors.white,
+                          shape: const CircleBorder(),
+                          child: InkWell(
+                            customBorder: const CircleBorder(),
+                            onTap: _sending ? null : _send,
+                            child: Padding(
+                              padding: const EdgeInsets.all(10),
+                              child: _sending
+                                  ? const SizedBox(
+                                      width: 18,
+                                      height: 18,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: AppColors.fgContainer,
+                                      ),
+                                    )
+                                  : const Icon(
+                                      Icons.arrow_upward_rounded,
+                                      color: AppColors.fgContainer,
+                                      size: 20,
+                                    ),
+                            ),
                           ),
                         )
-                      : const Icon(
-                          SolarIconsBold.plain,
-                          color: AppColors.fgContainer,
-                          size: 20,
+                      : IconButton(
+                          icon: const Icon(Icons.mic_outlined, size: 20),
+                          color: AppColors.fgSoft,
+                          tooltip: 'Голосовое сообщение (скоро)',
+                          onPressed: () {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('Голосовые сообщения — скоро'),
+                              ),
+                            );
+                          },
                         ),
                 ),
-              ),
-            )
-          else
-            // Mic icon stub (no recording yet)
-            IconButton(
-              icon: const Icon(Icons.mic_outlined, color: AppColors.fgSoft),
-              tooltip: 'Голосовое сообщение (скоро)',
-              onPressed: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Голосовые сообщения — скоро')),
-                );
-              },
+              ],
             ),
-        ],
+          ),
+        ),
       ),
     );
   }
@@ -803,6 +929,7 @@ class _MessageBubble extends StatelessWidget {
     final bg = mine ? AppColors.white : AppColors.bg2;
     final fg = mine ? AppColors.fgContainer : AppColors.white;
     final parsedNoteColor = _safeColor(noteColorLabel);
+    final hasOutsideStatus = deliveryStatus != null;
     return GestureDetector(
       onLongPress: (mine && onDelete != null) ? onDelete : null,
       child: Padding(
@@ -1030,5 +1157,178 @@ class _DateSeparator extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+// ─── Typing strip ───────────────────────────────────────────────────────────
+
+class _TypingStrip extends StatelessWidget {
+  final String? label;
+
+  const _TypingStrip({required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedSize(
+      duration: const Duration(milliseconds: 200),
+      curve: Curves.easeOut,
+      child: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 200),
+        transitionBuilder: (child, animation) {
+          return FadeTransition(
+            opacity: animation,
+            child: SlideTransition(
+              position: Tween<Offset>(
+                begin: const Offset(0, 0.5),
+                end: Offset.zero,
+              ).animate(animation),
+              child: child,
+            ),
+          );
+        },
+        child: label == null
+            ? const SizedBox.shrink(key: ValueKey('empty'))
+            : Container(
+                key: const ValueKey('typing'),
+                width: double.infinity,
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const TypingIndicator(dotSize: 5),
+                    const SizedBox(width: 6),
+                    Flexible(
+                      child: Text(
+                        label!,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: AppColors.fgSoft,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+      ),
+    );
+  }
+}
+
+// ─── Helpers ────────────────────────────────────────────────────────────────
+
+class _TypingUser {
+  final String name;
+  final Timer timer;
+
+  _TypingUser({required this.name, required this.timer});
+}
+
+enum _MessageDeliveryStatus { sent, read }
+
+// ─── Personal chat AppBar helpers ───────────────────────────────────────────
+
+class _PeerAvatarWithDot extends StatelessWidget {
+  final ChatUserProfile? profile;
+  final String title;
+  final String? Function(String?) resolveUrl;
+
+  const _PeerAvatarWithDot({
+    required this.profile,
+    required this.title,
+    required this.resolveUrl,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final avatarUrl = resolveUrl(profile?.avatarUrl);
+    final initials = (profile?.displayLabel ?? title).isNotEmpty
+        ? (profile?.displayLabel ?? title)[0].toUpperCase()
+        : '?';
+
+    return SizedBox(
+      width: 36,
+      height: 36,
+      child: Stack(
+        children: [
+          CircleAvatar(
+            radius: 18,
+            backgroundImage: avatarUrl != null ? NetworkImage(avatarUrl) : null,
+            backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+            child: avatarUrl == null
+                ? Text(initials, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600))
+                : null,
+          ),
+          Positioned(
+            right: 0,
+            bottom: 0,
+            child: Container(
+              width: 11,
+              height: 11,
+              decoration: BoxDecoration(
+                color: (profile?.isOnline ?? false)
+                    ? const Color(0xFF4CAF50)
+                    : Colors.grey,
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: Theme.of(context).scaffoldBackgroundColor,
+                  width: 2,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PeerOnlineSubtitle extends StatelessWidget {
+  final ChatUserProfile? profile;
+
+  const _PeerOnlineSubtitle({required this.profile});
+
+  @override
+  Widget build(BuildContext context) {
+    final subtitleStyle = TextStyle(
+      fontSize: 11,
+      color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.65),
+    );
+
+    if (profile == null) {
+      return const SizedBox.shrink();
+    }
+
+    if (profile!.isOnline) {
+      return Text(
+        'В сети',
+        style: subtitleStyle.copyWith(color: const Color(0xFF4CAF50)),
+      );
+    }
+
+    final lastSeen = profile!.lastSeenAt;
+    if (lastSeen == null) {
+      return Text('Не в сети', style: subtitleStyle);
+    }
+
+    final diff = DateTime.now().difference(lastSeen);
+    final String ago;
+    if (diff.inMinutes < 1) {
+      ago = 'только что';
+    } else if (diff.inMinutes < 60) {
+      ago = '${diff.inMinutes} мин назад';
+    } else if (diff.inHours < 24) {
+      ago = '${diff.inHours} ч назад';
+    } else {
+      ago = '${diff.inDays} ${_daysLabel(diff.inDays)} назад';
+    }
+
+    return Text('Был(а) $ago', style: subtitleStyle);
+  }
+
+  static String _daysLabel(int d) {
+    if (d % 10 == 1 && d % 100 != 11) return 'день';
+    if (d % 10 >= 2 && d % 10 <= 4 && (d % 100 < 10 || d % 100 >= 20)) return 'дня';
+    return 'дней';
   }
 }

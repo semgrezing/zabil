@@ -88,6 +88,21 @@ class MessageDeletedEvent extends WsEvent {
   const MessageDeletedEvent({required this.kind, required this.messageId, required this.data});
 }
 
+class UserOnlineStatusEvent extends WsEvent {
+  final String userId;
+  final bool isOnline;
+  final DateTime? lastSeenAt;
+  const UserOnlineStatusEvent({
+    required this.userId,
+    required this.isOnline,
+    this.lastSeenAt,
+  });
+}
+
+class WsReconnectedEvent extends WsEvent {
+  const WsReconnectedEvent();
+}
+
 /// WebSocket-клиент с auto-reconnect.
 ///
 /// Подключается на auth (есть валидный access token), переподключается при
