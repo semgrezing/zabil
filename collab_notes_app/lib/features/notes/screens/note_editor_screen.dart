@@ -55,6 +55,10 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
   Timer? _typingDebounce;
   bool _startNewChecklistOnNextAdd = false;
 
+  // Inline checklist input controllers/focus nodes per section
+  final Map<String, TextEditingController> _inlineChecklistCtrls = {};
+  final Map<String, FocusNode> _inlineChecklistFocusNodes = {};
+
   bool get _isNew => widget.noteId == null;
 
   @override
@@ -145,6 +149,12 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
     _contentCtrl.dispose();
     _titleFocus.dispose();
     _contentFocus.dispose();
+    for (final ctrl in _inlineChecklistCtrls.values) {
+      ctrl.dispose();
+    }
+    for (final node in _inlineChecklistFocusNodes.values) {
+      node.dispose();
+    }
     super.dispose();
   }
 
@@ -522,13 +532,47 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
           },
         ),
       );
+      // Inline text field for adding new items
+      final sectionKey = section.sectionId;
+      _inlineChecklistCtrls[sectionKey] ??= TextEditingController();
+      _inlineChecklistFocusNodes[sectionKey] ??= FocusNode();
+      final inlineCtrl = _inlineChecklistCtrls[sectionKey]!;
+      final inlineFocus = _inlineChecklistFocusNodes[sectionKey]!;
+
       widgets.add(
-        Align(
-          alignment: Alignment.centerLeft,
-          child: IconButton(
-            onPressed: () => _addItemToSection(note, section),
-            icon: const Icon(SolarIconsOutline.addCircle),
-            tooltip: 'Добавить пункт',
+        Padding(
+          padding: const EdgeInsets.only(left: 8),
+          child: Row(
+            children: [
+              const SizedBox(width: 40), // align with checkbox
+              Expanded(
+                child: TextField(
+                  controller: inlineCtrl,
+                  focusNode: inlineFocus,
+                  decoration: const InputDecoration(
+                    hintText: 'Новый пункт...',
+                    hintStyle: TextStyle(color: AppColors.fgSoft, fontSize: 14),
+                    border: InputBorder.none,
+                    isDense: true,
+                    contentPadding: EdgeInsets.symmetric(vertical: 8),
+                  ),
+                  style: const TextStyle(fontSize: 14),
+                  textInputAction: TextInputAction.done,
+                  onSubmitted: (text) async {
+                    if (text.trim().isEmpty) return;
+                    await _addChecklistItem(
+                      note.id,
+                      text.trim(),
+                      position: section.endExclusive,
+                      sectionId: section.sectionId,
+                    );
+                    inlineCtrl.clear();
+                    // Keep focus for rapid entry
+                    inlineFocus.requestFocus();
+                  },
+                ),
+              ),
+            ],
           ),
         ),
       );
@@ -829,36 +873,39 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
   }
 
   Future<void> _onChecklistActionTap(NoteModel note) async {
-    final text = await _showChecklistInputDialog();
-    if (text == null || text.trim().isEmpty) return;
-
-    final createNewSection = _startNewChecklistOnNextAdd && note.checklistItems.isNotEmpty;
-    final sectionId = createNewSection
-        ? _generateChecklistSectionId()
-        : (note.checklistItems.isNotEmpty
-            ? note.checklistItems.last.sectionId
-            : 'main');
-
-    await _addChecklistItem(note.id, text.trim(), sectionId: sectionId);
-
-    if (mounted && createNewSection) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Создан новый чеклист')),
-      );
+    if (note.checklistItems.isEmpty) {
+      // No sections yet -- create the first item via dialog
+      final text = await _showChecklistInputDialog();
+      if (text == null || text.trim().isEmpty) return;
+      await _addChecklistItem(note.id, text.trim(), sectionId: 'main');
+      setState(() => _startNewChecklistOnNextAdd = false);
+      return;
     }
 
-    setState(() => _startNewChecklistOnNextAdd = false);
-  }
+    // If starting a new section, create it and focus its inline field
+    if (_startNewChecklistOnNextAdd) {
+      final newSectionId = _generateChecklistSectionId();
+      // Create first item in the new section via dialog
+      final text = await _showChecklistInputDialog();
+      if (text == null || text.trim().isEmpty) return;
+      await _addChecklistItem(note.id, text.trim(), sectionId: newSectionId);
+      setState(() => _startNewChecklistOnNextAdd = false);
+      // Focus the new section's inline field after rebuild
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _inlineChecklistFocusNodes[newSectionId]?.requestFocus();
+      });
+      return;
+    }
 
-  Future<void> _addItemToSection(NoteModel note, _ChecklistSection section) async {
-    final text = await _showChecklistInputDialog();
-    if (text == null || text.trim().isEmpty) return;
-    await _addChecklistItem(
-      note.id,
-      text.trim(),
-      position: section.endExclusive,
-      sectionId: section.sectionId,
-    );
+    // Focus the last section's inline text field
+    final sections = _splitChecklistSections(note.checklistItems);
+    if (sections.isNotEmpty) {
+      final lastSectionId = sections.last.sectionId;
+      final focusNode = _inlineChecklistFocusNodes[lastSectionId];
+      if (focusNode != null) {
+        focusNode.requestFocus();
+      }
+    }
   }
 
   String _generateChecklistSectionId() {
