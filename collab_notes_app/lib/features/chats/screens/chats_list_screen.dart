@@ -11,51 +11,37 @@ import '../../../shared/theme/app_dimensions.dart';
 import '../../../shared/widgets/app_loader.dart';
 import '../../auth/providers/auth_provider.dart';
 import '../../groups/providers/groups_provider.dart';
+import '../../groups/models/group_model.dart';
 import '../../groups/widgets/create_group_sheet.dart';
 import '../../groups/widgets/invite_member_sheet.dart';
-import '../../../core/realtime/ws_client.dart';
 import '../providers/chats_provider.dart';
 import '../services/chats_service.dart';
 import '../models/chat_message.dart';
 import '../../../core/config/app_config.dart';
 
-/// Список всех чатов — личные + групповые.
+/// Unified list of all conversations — personal + group, sorted by last message time.
 class ChatsListScreen extends ConsumerWidget {
   const ChatsListScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    return DefaultTabController(
-      length: 2,
-      child: Scaffold(
-        appBar: AppBar(
-          title: const Text('Чаты'),
-          actions: [
-            IconButton(
-              icon: const Icon(SolarIconsOutline.usersGroupRounded),
-              tooltip: 'Группы',
-              onPressed: () => _openGroupsManager(context, ref),
-            ),
-            IconButton(
-              icon: const Icon(SolarIconsOutline.userPlus),
-              tooltip: 'Новый личный чат',
-              onPressed: () => _startPersonalChat(context, ref),
-            ),
-          ],
-          bottom: const TabBar(
-            tabs: [
-              Tab(text: 'Личные'),
-              Tab(text: 'Группы'),
-            ],
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Чаты'),
+        actions: [
+          IconButton(
+            icon: const Icon(SolarIconsOutline.usersGroupRounded),
+            tooltip: 'Группы',
+            onPressed: () => _openGroupsManager(context, ref),
           ),
-        ),
-        body: const TabBarView(
-          children: [
-            _PersonalTab(),
-            _GroupsTab(),
-          ],
-        ),
+          IconButton(
+            icon: const Icon(SolarIconsOutline.userPlus),
+            tooltip: 'Новый личный чат',
+            onPressed: () => _startPersonalChat(context, ref),
+          ),
+        ],
       ),
+      body: const _UnifiedChatList(),
     );
   }
 
@@ -84,172 +70,424 @@ class ChatsListScreen extends ConsumerWidget {
   }
 }
 
-class _PersonalTab extends ConsumerWidget {
-  const _PersonalTab();
+// ─── Chat item union type ───────────────────────────────────────────────────
+
+/// Wraps either a personal conversation or a group for unified sorting.
+class _ChatItem {
+  final PersonalChatPreview? personal;
+  final GroupModel? group;
+
+  const _ChatItem.personal(PersonalChatPreview this.personal) : group = null;
+  const _ChatItem.group(GroupModel this.group) : personal = null;
+
+  bool get isPersonal => personal != null;
+  bool get isGroup => group != null;
+
+  /// Returns the timestamp of the last message, used for sorting.
+  DateTime get lastMessageAt {
+    if (personal != null) {
+      return personal!.lastMessage.createdAt;
+    }
+    return group!.lastMessage?.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+  }
+}
+
+// ─── Unified chat list ──────────────────────────────────────────────────────
+
+class _UnifiedChatList extends ConsumerWidget {
+  const _UnifiedChatList();
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final async = ref.watch(personalConversationsProvider);
+    final personalAsync = ref.watch(personalConversationsProvider);
+    final groupsAsync = ref.watch(groupsProvider);
     final myUserId = ref.watch(authStateProvider).valueOrNull?.user?.id;
-    return async.when(
-      loading: () => const _ChatsListSkeleton(),
-      error: (e, _) => AppErrorState(
-        message: 'Не удалось загрузить личные чаты',
-        onRetry: () =>
-            ref.read(personalConversationsProvider.notifier).refresh(),
-      ),
-      data: (list) {
-        if (list.isEmpty) {
-          return const AppEmptyState(
-            icon: SolarIconsOutline.userPlus,
-            message: 'Пока нет личных чатов',
-            hint: 'Нажмите ＋ сверху, чтобы начать переписку',
-          );
-        }
-        return RefreshIndicator(
-          onRefresh: () =>
-              ref.read(personalConversationsProvider.notifier).refresh(),
-          child: ListView.separated(
-            padding: const EdgeInsets.fromLTRB(8, 12, 8, 16),
-            itemCount: list.length,
-            separatorBuilder: (_, __) => const SizedBox(height: 4),
-            itemBuilder: (context, i) {
-              final c = list[i];
-              final displayName = _displayName(c.user);
-              final avatarUrl = _avatarUrl(c.user);
-              return _PersonalConversationCard(
-                avatarUrl: avatarUrl,
-                displayName: displayName,
-                isOnline: c.isOnline,
-                unreadCount: c.unreadCount,
-                lastMessage: c.lastMessage,
-                showStatus: c.lastMessage.senderId == myUserId,
-                onTap: () => context.push(
-                  '/chats/personal/${c.user['id']}?username=$displayName',
-                ),
-              );
-            },
-          ),
-        );
+
+    // Show skeleton while either is loading
+    if (personalAsync.isLoading || groupsAsync.isLoading) {
+      return const _ChatsListSkeleton();
+    }
+
+    // Show error if both failed
+    if (personalAsync.hasError && groupsAsync.hasError) {
+      return AppErrorState(
+        message: 'Не удалось загрузить чаты',
+        onRetry: () {
+          ref.read(personalConversationsProvider.notifier).refresh();
+          ref.read(groupsProvider.notifier).refresh();
+        },
+      );
+    }
+
+    final personalList = personalAsync.valueOrNull ?? [];
+    final groupsList = groupsAsync.valueOrNull ?? [];
+
+    if (personalList.isEmpty && groupsList.isEmpty) {
+      return const AppEmptyState(
+        icon: SolarIconsOutline.chatRound,
+        message: 'Пока нет чатов',
+        hint: 'Начните переписку или создайте группу',
+      );
+    }
+
+    // Build unified list
+    final items = <_ChatItem>[
+      ...personalList.map((c) => _ChatItem.personal(c)),
+      ...groupsList.map((g) => _ChatItem.group(g)),
+    ];
+
+    // Sort by last message time, descending (newest first)
+    items.sort((a, b) => b.lastMessageAt.compareTo(a.lastMessageAt));
+
+    return RefreshIndicator(
+      onRefresh: () async {
+        await Future.wait([
+          ref.read(personalConversationsProvider.notifier).refresh(),
+          ref.read(groupsProvider.notifier).refresh(),
+        ]);
       },
+      child: ListView.separated(
+        padding: const EdgeInsets.fromLTRB(8, 12, 8, 16),
+        itemCount: items.length,
+        separatorBuilder: (_, __) => const SizedBox(height: 4),
+        itemBuilder: (context, i) {
+          final item = items[i];
+          if (item.isPersonal) {
+            final c = item.personal!;
+            final displayName = _displayName(c.user);
+            final avatarUrl = _avatarUrl(c.user);
+            return _PersonalConversationCard(
+              avatarUrl: avatarUrl,
+              displayName: displayName,
+              isOnline: c.isOnline,
+              unreadCount: c.unreadCount,
+              lastMessage: c.lastMessage,
+              showStatus: c.lastMessage.senderId == myUserId,
+              onTap: () => context.push(
+                '/chats/personal/${c.user['id']}?username=$displayName',
+              ),
+            );
+          } else {
+            final g = item.group!;
+            final message = g.lastMessage;
+            return _GroupConversationCard(
+              avatarUrl: _groupAvatarUrl(g.avatarUrl),
+              title: g.title,
+              senderName: message?.sender.displayLabel,
+              previewText: message == null
+                  ? 'Создать первое сообщение'
+                  : message.previewText,
+              timeLabel: message?.createdAt == null
+                  ? null
+                  : DateFormat('HH:mm').format(message!.createdAt!.toLocal()),
+              onTap: () => context.push(
+                '/chats/group/${g.id}?title=${Uri.encodeComponent(g.title)}',
+              ),
+            );
+          }
+        },
+      ),
     );
   }
 }
 
-class _GroupsTab extends ConsumerStatefulWidget {
-  const _GroupsTab();
+// ─── Personal conversation card ─────────────────────────────────────────────
 
-  @override
-  ConsumerState<_GroupsTab> createState() => _GroupsTabState();
-}
+class _PersonalConversationCard extends StatelessWidget {
+  final String? avatarUrl;
+  final String displayName;
+  final bool isOnline;
+  final int unreadCount;
+  final PersonalChatMessage lastMessage;
+  final bool showStatus;
+  final VoidCallback onTap;
 
-class _GroupsTabState extends ConsumerState<_GroupsTab> {
-  final _service = ChatsService();
-  final Map<String, Future<List<GroupChatMessage>>> _previewFutures = {};
-  StreamSubscription? _wsSub;
-
-  @override
-  void initState() {
-    super.initState();
-    final ws = ref.read(wsClientProvider);
-    _wsSub = ws.events.listen((event) {
-      if (event is WsReconnectedEvent) {
-        // Clear all cached previews so they refetch with fresh data
-        setState(() {
-          _previewFutures.clear();
-        });
-        return;
-      }
-      if (event is GroupMessageEvent) {
-        final groupId = event.data['groupId']?.toString();
-        if (groupId == null) return;
-        setState(() {
-          _previewFutures.remove(groupId);
-        });
-        return;
-      }
-      if (event is GroupReadReceiptEvent) {
-        final groupId = event.groupId;
-        if (groupId.isEmpty) return;
-        setState(() {
-          _previewFutures.remove(groupId);
-        });
-      }
-    });
-  }
-
-  @override
-  void dispose() {
-    _wsSub?.cancel();
-    super.dispose();
-  }
-
-  Future<List<GroupChatMessage>> _previewFuture(String groupId) {
-    return _previewFutures[groupId] ??=
-        _service.getGroupMessages(groupId, limit: 1);
-  }
+  const _PersonalConversationCard({
+    required this.avatarUrl,
+    required this.displayName,
+    required this.isOnline,
+    required this.unreadCount,
+    required this.lastMessage,
+    required this.showStatus,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final groupsAsync = ref.watch(groupsProvider);
-    final myUserId = ref.watch(authStateProvider).valueOrNull?.user?.id;
-    return groupsAsync.when(
-      loading: () => const _ChatsListSkeleton(),
-      error: (e, _) => AppErrorState(
-        message: 'Не удалось загрузить группы',
-        onRetry: () => ref.read(groupsProvider.notifier).refresh(),
+    final previewText = lastMessage.body.trim().isNotEmpty
+        ? lastMessage.body
+        : lastMessage.imageUrl != null
+            ? 'Фото'
+            : 'Сообщение';
+    final timeLabel = DateFormat('HH:mm').format(lastMessage.createdAt.toLocal());
+    final isRead = lastMessage.readAt != null;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(AppRadii.md),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          child: Row(
+            children: [
+              // Avatar with online dot
+              _AvatarWithDot(
+                avatarUrl: avatarUrl,
+                initials: displayName.isNotEmpty ? displayName[0].toUpperCase() : '?',
+                isOnline: isOnline,
+                icon: null,
+              ),
+              const SizedBox(width: 12),
+              // Name + preview
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            displayName,
+                            style: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.white,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          timeLabel,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: AppColors.fgSoft,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+                    Row(
+                      children: [
+                        if (showStatus) ...[
+                          Icon(
+                            isRead ? Icons.done_all_rounded : Icons.done_rounded,
+                            size: 14,
+                            color: isRead ? AppColors.success : AppColors.fgSoft,
+                          ),
+                          const SizedBox(width: 4),
+                        ],
+                        Expanded(
+                          child: Text(
+                            previewText,
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: unreadCount > 0
+                                  ? AppColors.white
+                                  : AppColors.fgSoft,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        if (unreadCount > 0) ...[
+                          const SizedBox(width: 8),
+                          _UnreadBadge(count: unreadCount),
+                        ],
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
-      data: (groups) {
-        if (groups.isEmpty) {
-          return const AppEmptyState(
-            icon: SolarIconsOutline.usersGroupRounded,
-            message: 'Вы пока не в группе',
-            hint: 'Создайте группу или примите приглашение',
-          );
-        }
-        return ListView.separated(
-          padding: const EdgeInsets.fromLTRB(8, 12, 8, 16),
-          itemCount: groups.length,
-          separatorBuilder: (_, __) => const SizedBox(height: 4),
-          itemBuilder: (context, i) {
-            final g = groups[i];
-            return FutureBuilder<List<GroupChatMessage>>(
-              future: _previewFuture(g.id),
-              builder: (context, snapshot) {
-                final message = snapshot.data?.isNotEmpty == true
-                    ? snapshot.data!.first
-                    : null;
-                return _GroupConversationCard(
-                  avatarUrl: _groupAvatarUrl(g.avatarUrl),
-                  title: g.title,
-                  senderName: message == null ? null : _displayName(message.sender),
-                  previewText: message == null
-                      ? 'Создать первое сообщение'
-                      : _previewText(message),
-                  timeLabel: message == null
-                      ? null
-                      : DateFormat('HH:mm').format(message.createdAt.toLocal()),
-                  showStatus: message != null && message.senderId == myUserId,
-                  isRead: message?.isReadByMe ?? false,
-                  readCount: message?.readCount ?? 0,
-                  onTap: () => context.push(
-                    '/chats/group/${g.id}?title=${Uri.encodeComponent(g.title)}',
-                  ),
-                );
-              },
-            );
-          },
-        );
-      },
     );
   }
+}
 
-  String _previewText(GroupChatMessage message) {
-    if (message.body.trim().isNotEmpty) return message.body;
-    if (message.imageUrl != null) return 'Фото';
-    return 'Сообщение';
+// ─── Group conversation card ────────────────────────────────────────────────
+
+class _GroupConversationCard extends StatelessWidget {
+  final String? avatarUrl;
+  final String title;
+  final String? senderName;
+  final String previewText;
+  final String? timeLabel;
+  final VoidCallback onTap;
+
+  const _GroupConversationCard({
+    required this.avatarUrl,
+    required this.title,
+    required this.senderName,
+    required this.previewText,
+    required this.timeLabel,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(AppRadii.md),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          child: Row(
+            children: [
+              // Avatar with group icon
+              _AvatarWithDot(
+                avatarUrl: avatarUrl,
+                initials: title.isNotEmpty ? title[0].toUpperCase() : '?',
+                isOnline: false,
+                icon: SolarIconsOutline.usersGroupRounded,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            title,
+                            style: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.white,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        if (timeLabel != null) ...[
+                          const SizedBox(width: 8),
+                          Text(
+                            timeLabel!,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: AppColors.fgSoft,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      senderName != null ? '$senderName: $previewText' : previewText,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        color: AppColors.fgSoft,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
+
+// ─── Shared avatar widget ───────────────────────────────────────────────────
+
+class _AvatarWithDot extends StatelessWidget {
+  final String? avatarUrl;
+  final String initials;
+  final bool isOnline;
+  final IconData? icon;
+
+  const _AvatarWithDot({
+    required this.avatarUrl,
+    required this.initials,
+    required this.isOnline,
+    required this.icon,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 48,
+      height: 48,
+      child: Stack(
+        children: [
+          CircleAvatar(
+            radius: 24,
+            backgroundImage: avatarUrl != null ? NetworkImage(avatarUrl!) : null,
+            backgroundColor: const Color(0xFF2A2A2A),
+            child: avatarUrl == null
+                ? (icon != null
+                    ? Icon(icon, size: 20, color: AppColors.fgSoft)
+                    : Text(
+                        initials,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.white,
+                        ),
+                      ))
+                : null,
+          ),
+          if (isOnline)
+            Positioned(
+              right: 0,
+              bottom: 0,
+              child: Container(
+                width: 14,
+                height: 14,
+                decoration: BoxDecoration(
+                  color: AppColors.success,
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: AppColors.bg1,
+                    width: 2.5,
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─── Unread badge ───────────────────────────────────────────────────────────
+
+class _UnreadBadge extends StatelessWidget {
+  final int count;
+
+  const _UnreadBadge({required this.count});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: AppColors.white,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        count > 99 ? '99+' : count.toString(),
+        style: const TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+          color: AppColors.fgContainer,
+        ),
+      ),
+    );
+  }
+}
+
+// ─── Groups manager sheet ───────────────────────────────────────────────────
 
 class _GroupsManagerSheet extends ConsumerWidget {
   const _GroupsManagerSheet();

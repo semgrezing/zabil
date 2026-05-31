@@ -6,6 +6,7 @@ import '../models/note_model.dart';
 import '../screens/image_viewer_screen.dart';
 import '../../../shared/theme/app_colors.dart';
 import '../../../shared/theme/app_dimensions.dart';
+import '../../../shared/widgets/resilient_image.dart';
 
 class NoteCard extends StatefulWidget {
   final NoteModel note;
@@ -519,7 +520,7 @@ class _NoteImagesRow extends StatelessWidget {
               child: SizedBox(
                 width: _imageHeight,
                 height: _imageHeight,
-                child: _ResilientNoteImage(
+                child: ResilientImage(
                   urls: img.urlCandidates,
                   fit: BoxFit.cover,
                   errorBuilder: (context) => Container(
@@ -558,49 +559,6 @@ class _NoteImagesRow extends StatelessWidget {
     }
 
     return row;
-  }
-}
-
-class _ResilientNoteImage extends StatefulWidget {
-  const _ResilientNoteImage({
-    required this.urls,
-    required this.fit,
-    required this.errorBuilder,
-  });
-
-  final List<String> urls;
-  final BoxFit fit;
-  final WidgetBuilder errorBuilder;
-
-  @override
-  State<_ResilientNoteImage> createState() => _ResilientNoteImageState();
-}
-
-class _ResilientNoteImageState extends State<_ResilientNoteImage> {
-  int _urlIndex = 0;
-
-  @override
-  Widget build(BuildContext context) {
-    if (widget.urls.isEmpty || _urlIndex >= widget.urls.length) {
-      return widget.errorBuilder(context);
-    }
-
-    return Image.network(
-      widget.urls[_urlIndex],
-      fit: widget.fit,
-      errorBuilder: (_, __, ___) {
-        if (_urlIndex + 1 < widget.urls.length) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (!mounted) return;
-            setState(() {
-              _urlIndex += 1;
-            });
-          });
-          return const SizedBox.shrink();
-        }
-        return widget.errorBuilder(context);
-      },
-    );
   }
 }
 
