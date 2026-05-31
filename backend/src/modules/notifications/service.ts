@@ -221,7 +221,11 @@ export async function notifyNewNote(
   groupTitle: string,
 ) {
   const members = await app.prisma.groupMember.findMany({
-    where: { groupId: note.groupId, userId: { not: note.createdBy } },
+    where: {
+      groupId: note.groupId,
+      userId: { not: note.createdBy },
+      user: { notePushEnabled: true },
+    },
     select: { userId: true },
   })
   await Promise.all(
@@ -246,13 +250,12 @@ export async function notifyNoteUpdated(
   },
   groupTitle: string,
 ) {
-  // Checklist push notifications are globally disabled by product decision.
-  if (payload.reason === 'checklist') {
-    return
-  }
-
   const members = await app.prisma.groupMember.findMany({
-    where: { groupId: payload.groupId, userId: { not: payload.updatedBy } },
+    where: {
+      groupId: payload.groupId,
+      userId: { not: payload.updatedBy },
+      user: { notePushEnabled: true },
+    },
     select: { userId: true },
   })
 
@@ -318,8 +321,8 @@ export async function notifyNewPersonalMessage(
 }
 
 export async function notifyChecklistCompleted(
-  _app: FastifyInstance,
-  _payload: {
+  app: FastifyInstance,
+  payload: {
     noteId: string
     groupId: string
     title: string
@@ -327,6 +330,70 @@ export async function notifyChecklistCompleted(
     groupTitle: string
   },
 ) {
-  // Checklist push notifications are globally disabled by product decision.
-  return
+  const cooldownKey = `${payload.groupId}:${payload.noteId}`
+  const now = Date.now()
+  const lastSentAt = _checklistCompletionCooldown.get(cooldownKey) ?? 0
+  if (now - lastSentAt < CHECKLIST_COMPLETION_COOLDOWN_MS) {
+    return
+  }
+
+  const members = await app.prisma.groupMember.findMany({
+    where: {
+      groupId: payload.groupId,
+      userId: { not: payload.updatedBy },
+      user: { checklistPushEnabled: true },
+    },
+    select: { userId: true },
+  })
+  if (members.length === 0) return
+
+  _checklistCompletionCooldown.set(cooldownKey, now)
+
+  await Promise.all(
+    members.map((m) =>
+      sendPush(app, m.userId, {
+        title: payload.groupTitle,
+        body: `Чеклист завершен: «${payload.title}»`,
+        data: {
+          type: 'checklist_completed',
+          noteId: payload.noteId,
+          groupId: payload.groupId,
+        },
+      }),
+    ),
+  )
+}
+
+export async function notifyAppRelease(
+  app: FastifyInstance,
+  payload: {
+    version: string
+    platform: string
+    downloadUrl: string
+    notes?: string | null
+    mandatory?: boolean
+  },
+) {
+  const users = await app.prisma.user.findMany({
+    where: { releasePushEnabled: true },
+    select: { id: true },
+  })
+
+  await Promise.all(
+    users.map((user) =>
+      sendPush(app, user.id, {
+        title: `Доступна версия ${payload.version}`,
+        body: payload.notes?.trim().length != null && payload.notes!.trim().length > 0
+            ? payload.notes!.trim()
+            : 'Доступно новое обновление приложения',
+        data: {
+          type: 'app_release',
+          version: payload.version,
+          platform: payload.platform,
+          downloadUrl: payload.downloadUrl,
+          mandatory: payload.mandatory == true ? 'true' : 'false',
+        },
+      }),
+    ),
+  )
 }

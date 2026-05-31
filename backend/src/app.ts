@@ -25,7 +25,7 @@ import { activityRoutes } from './modules/activity/routes.js'
 import {
   addConnection, removeConnection,
   joinNote, leaveNote, leaveAllNotes, broadcastToNote,
-  sendToUser,
+  sendToUser, broadcastOnlineStatus,
 } from './modules/chats/wsHub.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -146,6 +146,14 @@ export async function buildApp() {
         addConnection(userId, handle)
         ws.send(JSON.stringify({ type: 'hello', userId }))
 
+        // Update lastSeenAt and broadcast online status on connect
+        const connectTime = new Date()
+        app.prisma.user.update({
+          where: { id: userId },
+          data: { lastSeenAt: connectTime },
+        }).catch(() => {})
+        broadcastOnlineStatus(userId, true, connectTime)
+
         // Cache displayName for this connection (resolved lazily once)
         let cachedDisplayName: string | null = null
         async function getDisplayName(): Promise<string> {
@@ -163,7 +171,14 @@ export async function buildApp() {
           try {
             const msg = JSON.parse(typeof raw === 'string' ? raw : raw.toString())
 
-            if (msg.type === 'presence' && msg.noteId) {
+            if (msg.type === 'ping') {
+              ws.send(JSON.stringify({ type: 'pong' }))
+              const pingTime = new Date()
+              app.prisma.user.update({
+                where: { id: userId },
+                data: { lastSeenAt: pingTime },
+              }).catch(() => {})
+            } else if (msg.type === 'presence' && msg.noteId) {
               const noteId = msg.noteId as string
 
               if (msg.action === 'join') {
@@ -195,16 +210,20 @@ export async function buildApp() {
                 noteId: msg.noteId,
                 userId,
               })
-            } else if (msg.type === 'chat_typing') {
+            } else if (msg.type === 'chat_typing' || msg.type === 'chat_typing_stop') {
+              const isStop = msg.type === 'chat_typing_stop'
               const now = Date.now()
               const kind = msg.kind as string | undefined
 
               if (kind === 'group' && typeof msg.groupId === 'string') {
                 const groupId = msg.groupId as string
-                const throttleKey = `${userId}:group:${groupId}`
-                const last = chatTypingLastSentAt.get(throttleKey) ?? 0
-                if (now - last < chatTypingThrottleMs) return
-                chatTypingLastSentAt.set(throttleKey, now)
+
+                if (!isStop) {
+                  const throttleKey = `${userId}:group:${groupId}`
+                  const last = chatTypingLastSentAt.get(throttleKey) ?? 0
+                  if (now - last < chatTypingThrottleMs) return
+                  chatTypingLastSentAt.set(throttleKey, now)
+                }
 
                 const member = await app.prisma.groupMember.findUnique({
                   where: { groupId_userId: { groupId, userId } },
@@ -217,22 +236,27 @@ export async function buildApp() {
                   select: { userId: true },
                 })
                 const displayName = await getDisplayName()
-                const payload = {
-                  type: 'chat_typing',
-                  kind: 'group',
-                  data: {
-                    groupId,
-                    senderId: userId,
-                    displayName,
-                  },
-                }
+                const payload = isStop
+                  ? {
+                      type: 'chat_typing_stop',
+                      kind: 'group',
+                      data: { groupId, senderId: userId },
+                    }
+                  : {
+                      type: 'chat_typing',
+                      kind: 'group',
+                      data: { groupId, senderId: userId, displayName },
+                    }
                 members.forEach((m) => sendToUser(m.userId, payload))
               } else if (kind === 'personal' && typeof msg.userId === 'string') {
                 const peerUserId = msg.userId as string
-                const throttleKey = `${userId}:personal:${peerUserId}`
-                const last = chatTypingLastSentAt.get(throttleKey) ?? 0
-                if (now - last < chatTypingThrottleMs) return
-                chatTypingLastSentAt.set(throttleKey, now)
+
+                if (!isStop) {
+                  const throttleKey = `${userId}:personal:${peerUserId}`
+                  const last = chatTypingLastSentAt.get(throttleKey) ?? 0
+                  if (now - last < chatTypingThrottleMs) return
+                  chatTypingLastSentAt.set(throttleKey, now)
+                }
 
                 const peer = await app.prisma.user.findUnique({
                   where: { id: peerUserId },
@@ -241,15 +265,18 @@ export async function buildApp() {
                 if (!peer) return
 
                 const displayName = await getDisplayName()
-                sendToUser(peerUserId, {
-                  type: 'chat_typing',
-                  kind: 'personal',
-                  data: {
-                    userId: peerUserId,
-                    senderId: userId,
-                    displayName,
-                  },
-                })
+                const payload = isStop
+                  ? {
+                      type: 'chat_typing_stop',
+                      kind: 'personal',
+                      data: { userId: peerUserId, senderId: userId },
+                    }
+                  : {
+                      type: 'chat_typing',
+                      kind: 'personal',
+                      data: { userId: peerUserId, senderId: userId, displayName },
+                    }
+                sendToUser(peerUserId, payload)
               }
             }
           } catch (_) {
@@ -257,7 +284,7 @@ export async function buildApp() {
           }
         })
 
-        ws.on('close', () => {
+        function handleDisconnect() {
           removeConnection(userId, handle)
           // Broadcast leave for every note this user was viewing
           const leftNotes = leaveAllNotes(userId)
@@ -269,19 +296,17 @@ export async function buildApp() {
               action: 'leave',
             })
           }
-        })
-        ws.on('error', () => {
-          removeConnection(userId, handle)
-          const leftNotes = leaveAllNotes(userId)
-          for (const noteId of leftNotes) {
-            broadcastToNote(noteId, userId, {
-              type: 'presence',
-              noteId,
-              userId,
-              action: 'leave',
-            })
-          }
-        })
+          // Update lastSeenAt and broadcast offline status (only if truly gone)
+          const disconnectTime = new Date()
+          app.prisma.user.update({
+            where: { id: userId },
+            data: { lastSeenAt: disconnectTime },
+          }).catch(() => {})
+          // isOnline check: if no connections remain, broadcast offline
+          broadcastOnlineStatus(userId, false, disconnectTime)
+        }
+        ws.on('close', handleDisconnect)
+        ws.on('error', handleDisconnect)
       } catch (_) {
         ws.close(1008, 'invalid token')
       }

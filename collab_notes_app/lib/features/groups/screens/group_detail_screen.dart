@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_cropper/image_cropper.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:intl/intl.dart';
 import 'package:solar_icons/solar_icons.dart';
 import '../models/group_model.dart';
 import '../providers/groups_provider.dart';
@@ -11,6 +12,7 @@ import '../../invitations/models/group_pending_invitation_model.dart';
 import '../../invitations/services/invitations_service.dart';
 import '../../../features/auth/providers/auth_provider.dart';
 import '../../../shared/theme/app_colors.dart';
+import '../../../shared/theme/app_dimensions.dart';
 import '../../../shared/widgets/app_loader.dart';
 import '../../../core/config/app_config.dart';
 import '../../../shared/widgets/avatar_history_viewer.dart';
@@ -76,20 +78,6 @@ class _GroupDetailScreenState extends ConsumerState<GroupDetailScreen> {
                 onPressed: () =>
                     _openInviteSheet(context, group.id, group.title),
               ),
-              if (canManage)
-                IconButton(
-                  icon: _updatingAvatar
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(SolarIconsOutline.settings),
-                  tooltip: 'Настройки группы',
-                  onPressed: _updatingAvatar
-                      ? null
-                      : () => _openManageSheet(context, group, canManage),
-                ),
               _GroupOverflowMenu(
                 group: group,
                 isOwner: isOwner,
@@ -99,63 +87,73 @@ class _GroupDetailScreenState extends ConsumerState<GroupDetailScreen> {
             ],
           ),
           body: ListView(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 112),
             children: [
-              Center(
+              _GroupHeaderCard(
+                title: group.title,
+                avatarUrl: avatarUrl,
+                membersCount: group.members.length,
+                onAvatarTap: () => _openAvatarViewer(context, group, canManage),
+              ),
+              const SizedBox(height: AppSpacing.md),
+              _GroupActionsCard(
+                canManage: canManage,
+                updatingAvatar: _updatingAvatar,
+                onRename: canManage ? () => _renameGroup(context, group) : null,
+                onChangeAvatar: canManage ? () => _changeAvatar(group) : null,
+                onAvatarHistory: () => _openAvatarViewer(context, group, canManage),
+                onInvite: () => _openInviteSheet(context, group.id, group.title),
+              ),
+              const SizedBox(height: AppSpacing.md),
+              _PendingInvitationsCard(
+                future: _invitationsService.getGroupPending(group.id),
+              ),
+              const SizedBox(height: AppSpacing.md),
+              _SectionCard(
+                title: 'Участники',
+                subtitle: _membersLabel(group.members.length),
                 child: Column(
                   children: [
-                    GestureDetector(
-                      onTap: () => _openAvatarViewer(context, group, canManage),
-                      child: CircleAvatar(
-                        radius: 38,
-                        backgroundImage:
-                            avatarUrl != null ? NetworkImage(avatarUrl) : null,
-                        child: avatarUrl == null
-                            ? Text(
-                                group.title.isNotEmpty
-                                    ? group.title[0].toUpperCase()
-                                    : '?',
-                                style: Theme.of(context).textTheme.titleLarge,
-                              )
-                            : null,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      group.title,
-                      style: Theme.of(context).textTheme.titleLarge,
-                    ),
-                    const SizedBox(height: 8),
+                    ...group.members.map((member) {
+                      final memberAvatarUrl = _resolveAvatar(member.avatarUrl);
+                      final canKick = canManage && member.role == 'member';
+                      return ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: Stack(
+                          clipBehavior: Clip.none,
+                          children: [
+                            CircleAvatar(
+                              backgroundImage: memberAvatarUrl != null
+                                  ? NetworkImage(memberAvatarUrl)
+                                  : null,
+                              child: memberAvatarUrl == null
+                                  ? Text(member.displayLabel[0].toUpperCase())
+                                  : null,
+                            ),
+                            Positioned(
+                              right: -1,
+                              bottom: -1,
+                              child: _MemberOnlineDot(isOnline: member.isOnline),
+                            ),
+                          ],
+                        ),
+                        title: Text(member.displayLabel),
+                        subtitle: Text(
+                          '@${member.username} · ${_presenceLabel(member.isOnline, member.lastSeenAt)}',
+                        ),
+                        trailing: _roleChip(context, member.role),
+                        onTap: () => context.push('/users/${member.userId}'),
+                        onLongPress: () => _openMemberActions(
+                          context,
+                          group,
+                          member,
+                          canKick: canKick,
+                        ),
+                      );
+                    }),
                   ],
                 ),
               ),
-              const Divider(),
-              ...group.members.map((member) {
-                final memberAvatarUrl = _resolveAvatar(member.avatarUrl);
-                final canKick = canManage && member.role == 'member';
-                return ListTile(
-                  leading: CircleAvatar(
-                    backgroundImage:
-                        memberAvatarUrl != null ? NetworkImage(memberAvatarUrl) : null,
-                    child: memberAvatarUrl == null
-                        ? Text(member.displayLabel[0].toUpperCase())
-                        : null,
-                  ),
-                  title: Text(member.displayLabel),
-                  trailing: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      _roleChip(context, member.role),
-                      if (canKick)
-                        IconButton(
-                          icon: const Icon(Icons.person_remove_alt_1),
-                          tooltip: 'Исключить',
-                          onPressed: () => _kickMember(context, group, member),
-                        ),
-                    ],
-                  ),
-                );
-              }),
             ],
           ),
           floatingActionButton: FloatingActionButton.extended(
@@ -166,6 +164,47 @@ class _GroupDetailScreenState extends ConsumerState<GroupDetailScreen> {
         );
       },
     );
+  }
+
+  Future<void> _renameGroup(BuildContext context, GroupModel group) async {
+    final controller = TextEditingController(text: group.title);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Изменить название группы'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: 'Название группы'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Сохранить'),
+          ),
+        ],
+      ),
+    );
+    final nextTitle = controller.text.trim();
+    if (confirmed != true || nextTitle.isEmpty || nextTitle == group.title) {
+      return;
+    }
+    try {
+      await ref.read(groupsProvider.notifier).updateGroupTitle(group.id, nextTitle);
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Название группы обновлено')),
+      );
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Не удалось обновить название: $e')),
+      );
+    }
   }
 
   Future<void> _openInviteSheet(
@@ -240,162 +279,6 @@ class _GroupDetailScreenState extends ConsumerState<GroupDetailScreen> {
     }
   }
 
-  Future<void> _openManageSheet(
-    BuildContext context,
-    GroupModel group,
-    bool canManage,
-  ) async {
-    final titleCtrl = TextEditingController(text: group.title);
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      showDragHandle: true,
-      builder: (ctx) => Padding(
-        padding: EdgeInsets.only(
-          left: 16,
-          right: 16,
-          top: 12,
-          bottom: MediaQuery.of(ctx).viewInsets.bottom + 16,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Настройки группы', style: Theme.of(ctx).textTheme.titleMedium),
-            const SizedBox(height: 12),
-            TextField(
-              controller: titleCtrl,
-              decoration: const InputDecoration(labelText: 'Название группы'),
-            ),
-            const SizedBox(height: 12),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                FilledButton.icon(
-                  onPressed: () => _changeAvatar(group),
-                  icon: const Icon(Icons.photo_camera_outlined),
-                  label: const Text('Аватарка'),
-                ),
-                OutlinedButton.icon(
-                  onPressed: () => _openAvatarViewer(context, group, canManage),
-                  icon: const Icon(Icons.photo_library_outlined),
-                  label: const Text('История аватарок'),
-                ),
-                OutlinedButton.icon(
-                  onPressed: () async {
-                    await ref.read(groupsProvider.notifier).deleteAvatar(group.id);
-                    if (!context.mounted) return;
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Текущая аватарка удалена')),
-                    );
-                  },
-                  icon: const Icon(SolarIconsOutline.trashBinTrash),
-                  label: const Text('Удалить текущую'),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            FutureBuilder<List<GroupPendingInvitationModel>>(
-              future: _invitationsService.getGroupPending(group.id),
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 8),
-                    child: LinearProgressIndicator(minHeight: 2),
-                  );
-                }
-
-                if (snapshot.hasError) {
-                  return Container(
-                    margin: const EdgeInsets.only(bottom: 12),
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: Theme.of(context)
-                          .colorScheme
-                          .surfaceContainerHighest,
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: const Text(
-                      'Не удалось загрузить pending-приглашения',
-                      style: TextStyle(fontSize: 12),
-                    ),
-                  );
-                }
-
-                final pending = snapshot.data ?? const [];
-                if (pending.isEmpty) {
-                  return const SizedBox.shrink();
-                }
-
-                return Container(
-                  margin: const EdgeInsets.only(bottom: 12),
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context)
-                        .colorScheme
-                        .surfaceContainerHighest
-                        .withValues(alpha: 0.55),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Ожидают подтверждения (${pending.length})',
-                        style: Theme.of(context).textTheme.titleSmall,
-                      ),
-                      const SizedBox(height: 8),
-                      ...pending.map((inv) => ListTile(
-                            dense: true,
-                            contentPadding: EdgeInsets.zero,
-                            leading: const Icon(
-                              SolarIconsOutline.clockCircle,
-                              size: 18,
-                              color: AppColors.fgSoft,
-                            ),
-                            title: Text(inv.receiverLabel),
-                            subtitle: Text('Отправил: ${inv.senderLabel}'),
-                          )),
-                    ],
-                  ),
-                );
-              },
-            ),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: () => Navigator.of(ctx).pop(),
-                    child: const Text('Закрыть'),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: () async {
-                      final nextTitle = titleCtrl.text.trim();
-                      if (nextTitle.isEmpty || nextTitle == group.title) {
-                        Navigator.of(ctx).pop();
-                        return;
-                      }
-                      await ref.read(groupsProvider.notifier).updateGroupTitle(
-                            group.id,
-                            nextTitle,
-                          );
-                      if (ctx.mounted) Navigator.of(ctx).pop();
-                    },
-                    child: const Text('Сохранить'),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   Future<void> _changeAvatar(GroupModel group) async {
     final picker = ImagePicker();
     final picked = await picker.pickImage(source: ImageSource.gallery);
@@ -431,6 +314,49 @@ class _GroupDetailScreenState extends ConsumerState<GroupDetailScreen> {
     } finally {
       if (mounted) setState(() => _updatingAvatar = false);
     }
+  }
+
+  Future<void> _openMemberActions(
+    BuildContext context,
+    GroupModel group,
+    GroupMemberModel member, {
+    required bool canKick,
+  }) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(SolarIconsOutline.user),
+              title: const Text('Открыть профиль'),
+              onTap: () {
+                Navigator.of(sheetContext).pop();
+                context.push('/users/${member.userId}');
+              },
+            ),
+            if (canKick)
+              ListTile(
+                leading: const Icon(
+                  Icons.person_remove_alt_1,
+                  color: AppColors.negative,
+                ),
+                title: const Text(
+                  'Исключить из группы',
+                  style: TextStyle(color: AppColors.negative),
+                ),
+                onTap: () async {
+                  Navigator.of(sheetContext).pop();
+                  await _kickMember(context, group, member);
+                },
+              ),
+            const SizedBox(height: AppSpacing.sm),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _openAvatarViewer(
@@ -475,6 +401,256 @@ class _GroupDetailScreenState extends ConsumerState<GroupDetailScreen> {
       ),
     );
   }
+}
+
+String _presenceLabel(bool isOnline, DateTime? lastSeenAt) {
+  if (isOnline) return 'В сети';
+  if (lastSeenAt == null) return 'Не в сети';
+  final diff = DateTime.now().difference(lastSeenAt.toLocal());
+  if (diff.inMinutes < 1) return 'Был(а) только что';
+  if (diff.inMinutes < 60) return 'Был(а) ${diff.inMinutes} мин назад';
+  if (diff.inHours < 24) return 'Был(а) ${diff.inHours} ч назад';
+  return 'Был(а) ${DateFormat('dd.MM.yyyy HH:mm').format(lastSeenAt.toLocal())}';
+}
+
+class _MemberOnlineDot extends StatelessWidget {
+  final bool isOnline;
+
+  const _MemberOnlineDot({required this.isOnline});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 10,
+      height: 10,
+      decoration: BoxDecoration(
+        color: isOnline ? Colors.green.shade600 : Theme.of(context).colorScheme.outline,
+        shape: BoxShape.circle,
+        border: Border.all(
+          color: Theme.of(context).colorScheme.surface,
+          width: 1.5,
+        ),
+      ),
+    );
+  }
+}
+
+class _GroupHeaderCard extends StatelessWidget {
+  final String title;
+  final String? avatarUrl;
+  final int membersCount;
+  final VoidCallback onAvatarTap;
+
+  const _GroupHeaderCard({
+    required this.title,
+    required this.avatarUrl,
+    required this.membersCount,
+    required this.onAvatarTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(AppRadii.lg),
+      ),
+      child: Column(
+        children: [
+          GestureDetector(
+            onTap: onAvatarTap,
+            child: CircleAvatar(
+              radius: 38,
+              backgroundImage: avatarUrl != null ? NetworkImage(avatarUrl!) : null,
+              child: avatarUrl == null
+                  ? Text(
+                      title.isNotEmpty ? title[0].toUpperCase() : '?',
+                      style: Theme.of(context).textTheme.titleLarge,
+                    )
+                  : null,
+            ),
+          ),
+          const SizedBox(height: AppSpacing.md),
+          Text(title, style: Theme.of(context).textTheme.headlineSmall),
+          const SizedBox(height: 6),
+          Text(
+            _membersLabel(membersCount),
+            style: Theme.of(context)
+                .textTheme
+                .bodyMedium
+                ?.copyWith(color: AppColors.fgSoft),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _GroupActionsCard extends StatelessWidget {
+  final bool canManage;
+  final bool updatingAvatar;
+  final VoidCallback? onRename;
+  final VoidCallback? onChangeAvatar;
+  final VoidCallback onAvatarHistory;
+  final VoidCallback onInvite;
+
+  const _GroupActionsCard({
+    required this.canManage,
+    required this.updatingAvatar,
+    required this.onRename,
+    required this.onChangeAvatar,
+    required this.onAvatarHistory,
+    required this.onInvite,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return _SectionCard(
+      title: 'Управление группой',
+      subtitle: canManage ? 'Настройки и состав' : 'Быстрые действия',
+      child: Wrap(
+        spacing: AppSpacing.sm,
+        runSpacing: AppSpacing.sm,
+        children: [
+          if (canManage)
+            FilledButton.icon(
+              onPressed: onRename,
+              icon: const Icon(SolarIconsOutline.pen2),
+              label: const Text('Название'),
+            ),
+          if (canManage)
+            FilledButton.icon(
+              onPressed: updatingAvatar ? null : onChangeAvatar,
+              icon: updatingAvatar
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(SolarIconsOutline.camera),
+              label: const Text('Аватарка'),
+            ),
+          OutlinedButton.icon(
+            onPressed: onAvatarHistory,
+            icon: const Icon(SolarIconsOutline.galleryWide),
+            label: const Text('История аватарок'),
+          ),
+          OutlinedButton.icon(
+            onPressed: onInvite,
+            icon: const Icon(SolarIconsOutline.userPlus),
+            label: const Text('Пригласить'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PendingInvitationsCard extends StatelessWidget {
+  final Future<List<GroupPendingInvitationModel>> future;
+
+  const _PendingInvitationsCard({required this.future});
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<List<GroupPendingInvitationModel>>(
+      future: future,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const _SectionCard(
+            title: 'Приглашения',
+            subtitle: 'Загружаем pending-приглашения',
+            child: LinearProgressIndicator(minHeight: 2),
+          );
+        }
+
+        if (snapshot.hasError) {
+          return const _SectionCard(
+            title: 'Приглашения',
+            subtitle: 'Не удалось загрузить pending-приглашения',
+            child: SizedBox.shrink(),
+          );
+        }
+
+        final pending = snapshot.data ?? const [];
+        return _SectionCard(
+          title: 'Приглашения',
+          subtitle: pending.isEmpty
+              ? 'Сейчас никто не ожидает подтверждения'
+              : 'Ожидают подтверждения: ${pending.length}',
+          child: pending.isEmpty
+              ? const Text('Новых pending-приглашений нет')
+              : Column(
+                  children: pending
+                      .map(
+                        (inv) => ListTile(
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                          leading: const Icon(
+                            SolarIconsOutline.clockCircle,
+                            size: 18,
+                            color: AppColors.fgSoft,
+                          ),
+                          title: Text(inv.receiverLabel),
+                          subtitle: Text('Отправил: ${inv.senderLabel}'),
+                        ),
+                      )
+                      .toList(),
+                ),
+        );
+      },
+    );
+  }
+}
+
+class _SectionCard extends StatelessWidget {
+  final String title;
+  final String? subtitle;
+  final Widget child;
+
+  const _SectionCard({
+    required this.title,
+    this.subtitle,
+    required this.child,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(AppRadii.lg),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: Theme.of(context).textTheme.titleMedium),
+          if (subtitle != null) ...[
+            const SizedBox(height: 4),
+            Text(
+              subtitle!,
+              style: Theme.of(context)
+                  .textTheme
+                  .bodySmall
+                  ?.copyWith(color: AppColors.fgSoft),
+            ),
+          ],
+          const SizedBox(height: AppSpacing.sm),
+          child,
+        ],
+      ),
+    );
+  }
+}
+
+String _membersLabel(int n) {
+  if (n % 10 == 1 && n % 100 != 11) return '$n участник';
+  if ([2, 3, 4].contains(n % 10) && ![12, 13, 14].contains(n % 100)) {
+    return '$n участника';
+  }
+  return '$n участников';
 }
 
 /// Меню в AppBar: «Удалить» для владельца, «Выйти» для остальных.

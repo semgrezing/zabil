@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import '../../../core/api/api_client.dart';
 import '../../../core/config/api_endpoints.dart';
+import '../../../features/chats/providers/chats_provider.dart';
 import '../../../features/groups/providers/groups_provider.dart';
 import '../../../features/invitations/services/invitations_service.dart';
 import 'package:dio/dio.dart';
@@ -10,8 +12,20 @@ import 'package:dio/dio.dart';
 class UserSearchResult {
   final String id;
   final String username;
+  final String? displayName;
+  final String? avatarUrl;
 
-  const UserSearchResult({required this.id, required this.username});
+  const UserSearchResult({
+    required this.id,
+    required this.username,
+    this.displayName,
+    this.avatarUrl,
+  });
+
+  String get label {
+    final value = displayName?.trim();
+    return value != null && value.isNotEmpty ? value : username;
+  }
 }
 
 class SearchScreen extends ConsumerStatefulWidget {
@@ -52,6 +66,8 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
         _result = UserSearchResult(
           id: user['id'] as String,
           username: user['username'] as String,
+          displayName: user['displayName'] as String?,
+          avatarUrl: user['avatarUrl'] as String?,
         );
       });
     } on DioException catch (e) {
@@ -120,6 +136,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final recentContacts = ref.watch(personalConversationsProvider).valueOrNull ?? const [];
     return Scaffold(
       appBar: AppBar(title: const Text('Поиск')),
       body: Padding(
@@ -154,17 +171,82 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                 _searchError!,
                 style: TextStyle(color: Theme.of(context).colorScheme.error),
               ),
+            if (_searchCtrl.text.trim().isEmpty && recentContacts.isNotEmpty) ...[
+              const Align(
+                alignment: Alignment.centerLeft,
+                child: Padding(
+                  padding: EdgeInsets.only(bottom: 12),
+                  child: Text(
+                    'Недавние',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ),
+              Expanded(
+                child: ListView.builder(
+                  itemCount: recentContacts.length,
+                  itemBuilder: (context, index) {
+                    final user = recentContacts[index].user;
+                    final result = UserSearchResult(
+                      id: user['id'] ?? '',
+                      username: user['username'] ?? '',
+                      displayName: user['displayName'],
+                      avatarUrl: user['avatarUrl'],
+                    );
+                    return ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: CircleAvatar(
+                        backgroundImage: _resolveAvatar(result.avatarUrl) != null
+                            ? NetworkImage(_resolveAvatar(result.avatarUrl)!)
+                            : null,
+                        child: _resolveAvatar(result.avatarUrl) == null
+                            ? Text(result.label[0].toUpperCase())
+                            : null,
+                      ),
+                      title: Text(result.label),
+                      subtitle: Text('@${result.username}'),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () {
+                        _searchCtrl.text = result.username;
+                        setState(() {
+                          _result = result;
+                          _searchError = null;
+                        });
+                      },
+                    );
+                  },
+                ),
+              ),
+            ],
             if (_result != null)
               Card(
                 child: ListTile(
                   leading: CircleAvatar(
-                    child: Text(_result!.username[0].toUpperCase()),
+                    backgroundImage: _resolveAvatar(_result!.avatarUrl) != null
+                        ? NetworkImage(_resolveAvatar(_result!.avatarUrl)!)
+                        : null,
+                    child: _resolveAvatar(_result!.avatarUrl) == null
+                        ? Text(_result!.label[0].toUpperCase())
+                        : null,
                   ),
-                  title: Text('@${_result!.username}'),
-                  trailing: TextButton.icon(
-                    icon: const Icon(Icons.mail_outline),
-                    label: const Text('Пригласить'),
-                    onPressed: () => _sendInvite(context, _result!.username),
+                  title: Text(_result!.label),
+                  subtitle: Text('@${_result!.username}'),
+                  trailing: Wrap(
+                    spacing: 4,
+                    children: [
+                      TextButton.icon(
+                        icon: const Icon(Icons.chat_bubble_outline),
+                        label: const Text('Чат'),
+                        onPressed: () => context.push(
+                          '/chats/personal/${_result!.id}?username=${Uri.encodeComponent(_result!.label)}',
+                        ),
+                      ),
+                      TextButton.icon(
+                        icon: const Icon(Icons.mail_outline),
+                        label: const Text('Пригласить'),
+                        onPressed: () => _sendInvite(context, _result!.username),
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -172,5 +254,12 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
         ),
       ),
     );
+  }
+
+  String? _resolveAvatar(String? raw) {
+    final value = raw?.trim();
+    if (value == null || value.isEmpty) return null;
+    if (value.startsWith('http://') || value.startsWith('https://')) return value;
+    return '${ApiClient.create().options.baseUrl}$value';
   }
 }

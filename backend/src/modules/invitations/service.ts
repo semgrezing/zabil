@@ -25,7 +25,7 @@ export async function sendInvitation(app: FastifyInstance, senderId: string, dto
     select: { isPersonal: true },
   })
   if (!group) throw errors.notFound('Группа')
-  if (group.isPersonal) throw errors.badRequest('В личный контекст нельзя приглашать')
+  if (group.isPersonal) throw errors.badRequest('В личную группу нельзя приглашать')
 
   // Find receiver by username
   const receiver = await app.prisma.user.findUnique({
@@ -35,7 +35,7 @@ export async function sendInvitation(app: FastifyInstance, senderId: string, dto
 
   // Can't invite yourself
   if (receiver.id === senderId) {
-    throw errors.badRequest('Нельзя пригласить себя')
+    throw errors.badRequest('Пригласить себя не выйдет 😶')
   }
 
   // Check if already a member

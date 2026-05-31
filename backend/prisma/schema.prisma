@@ -11,13 +11,17 @@ datasource db {
 }
 
 model User {
-  id           String   @id @default(uuid())
-  username     String   @unique
-  passwordHash String   @map("password_hash")
-  displayName  String?  @map("display_name")
-  avatarUrl    String?  @map("avatar_url")
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @updatedAt @map("updated_at")
+  id           String    @id @default(uuid())
+  username     String    @unique
+  passwordHash String    @map("password_hash")
+  displayName  String?   @map("display_name")
+  avatarUrl    String?   @map("avatar_url")
+  notePushEnabled Boolean @default(false) @map("note_push_enabled")
+  checklistPushEnabled Boolean @default(false) @map("checklist_push_enabled")
+  releasePushEnabled Boolean @default(true) @map("release_push_enabled")
+  lastSeenAt   DateTime? @map("last_seen_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
 
   // Relations
   groupsCreated   Group[]         @relation("GroupCreator")
@@ -27,6 +31,7 @@ model User {
   notesCreated    Note[]
   refreshTokens   RefreshToken[]
   groupChatMessages  GroupChatMessage[]
+  groupMessageReads  GroupMessageRead[]
   sentPersonalMessages     PersonalMessage[] @relation("PersonalSender")
   receivedPersonalMessages PersonalMessage[] @relation("PersonalReceiver")
   deviceTokens   DeviceToken[]
@@ -137,13 +142,29 @@ model GroupChatMessage {
   imageCompressed Boolean? @map("image_compressed")
   createdAt DateTime @default(now()) @map("created_at")
 
-  group  Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
-  sender User  @relation(fields: [senderId], references: [id], onDelete: Cascade)
-  note   Note? @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  group   Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  sender  User  @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  note    Note? @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  reads   GroupMessageRead[]
 
   @@index([groupId, createdAt])
   @@index([noteId, createdAt])
   @@map("group_chat_messages")
+}
+
+/// Tracks which group members have read which group messages.
+model GroupMessageRead {
+  id        String   @id @default(uuid())
+  messageId String   @map("message_id")
+  userId    String   @map("user_id")
+  readAt    DateTime @default(now()) @map("read_at")
+
+  message GroupChatMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId])
+  @@index([userId])
+  @@map("group_message_reads")
 }
 
 // Личные 1:1 чаты между пользователями.

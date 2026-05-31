@@ -38,6 +38,9 @@ export async function registerUser(app: FastifyInstance, dto: RegisterDto) {
       username: user.username,
       displayName: user.displayName,
       avatarUrl: user.avatarUrl,
+      notePushEnabled: user.notePushEnabled,
+      checklistPushEnabled: user.checklistPushEnabled,
+      releasePushEnabled: user.releasePushEnabled,
     },
     ...tokens,
   }
@@ -63,6 +66,9 @@ export async function loginUser(app: FastifyInstance, dto: LoginDto) {
       username: user.username,
       displayName: user.displayName,
       avatarUrl: user.avatarUrl,
+      notePushEnabled: user.notePushEnabled,
+      checklistPushEnabled: user.checklistPushEnabled,
+      releasePushEnabled: user.releasePushEnabled,
     },
     ...tokens,
   }

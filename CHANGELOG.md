@@ -1,5 +1,72 @@
 # Changelog
 
+## [1.21.0] — 2026-05-31
+
+### Added
+- **Поиск пользователей**: при пустом поле поиска показывается блок `Недавние` на основе последних личных контактов; тап по контакту подставляет пользователя в поиск и даёт быстрый переход в личный чат.
+- **Фильтры Активности**: в ленте активности добавлены chips-фильтры `Все`, по пользователям и по группам.
+- **Shimmer skeletons**: общий `AppLoader` заменён на мерцающий skeleton-list для backend-fed экранов.
+
+### Changed
+- **Анимация заметок**: переключение list/grid в заметках теперь анимировано через плавный fade/slide/scale transition между двумя layout-viewport.
+
+## [1.20.0] — 2026-05-31
+
+### Added
+- **Онлайн-статус в списках**: dot-индикаторы и `В сети / Был(а) ...` добавлены в список личных чатов и список участников группы; состояние обновляется live через WS `user_online_status`.
+- **Настройки пушей**: в `Настройках` добавлены пользовательские тумблеры для заметок, чеклистов и push новых версий.
+- **Push новых версий**: backend при публикации релиза отправляет событие `app_release` с download URL; в приложении показывается in-app snackbar с кнопкой `Скачать`.
+
+### Backend
+- В `User` добавлены поля `notePushEnabled`, `checklistPushEnabled`, `releasePushEnabled`.
+- `PATCH /users/me` теперь обновляет notification preferences.
+- `GET /groups` и `GET /groups/:id` возвращают `lastSeenAt` участников.
+- `GET /chats/personal` возвращает `isOnline` и `lastSeenAt` для preview собеседника.
+- `notifyNewNote` / `notifyNoteUpdated` учитывают user-level prefs.
+- `notifyChecklistCompleted` снова активен, но только при полном завершении чеклиста и только для opt-in пользователей.
+
+### Notes
+- Для выкладки нужна миграция БД под новые поля `users.note_push_enabled`, `users.checklist_push_enabled`, `users.release_push_enabled`.
+
+## [1.19.0] — 2026-05-31
+
+### Added
+- **Группы и профиль**: список групп показывает превью последнего сообщения вместо количества участников.
+- **Контекстное меню группы**: long-press по группе открывает действия `Участники`, `Изменить название`, `Изменить аватарку`, `Пригласить`, `Удалить/Покинуть`.
+- **Полноэкранная страница группы**: group detail переведён в full-screen info flow вместо settings bottom sheet.
+- **Pending invitations**: pending-приглашения вынесены прямо на страницу группы.
+- **Профиль участника**: страница пользователя расширена общими группами, онлайн-статусом и кнопками `Написать сообщение` / `Пригласить в группу`.
+
+### Backend
+- `GET /groups` / `GET /groups/:id` отдают `lastMessage` для group preview.
+
+## [1.18.0] — 2026-05-31
+
+### Added
+- **Статусы сообщений**: 1 галочка = отправлено, 2 галочки = прочитано (рядом с timestamp в пузыре). Личные чаты — уже работали, групповые: новая модель `GroupMessageRead`, endpoint `POST /chats/groups/:groupId/read`, WS-событие `group_read_receipt`. Прочитано = хотя бы 1 участник прочитал.
+- **Typing indicator**: анимированная полоска «Имя печатает...» / «Имя, Имя печатают...» над полем ввода. Debounce 2 сек, немедленный stop при отправке. Реиспользован существующий `TypingIndicator` виджет.
+- **Аватар + онлайн в хедере личного чата**: реальная аватарка собеседника (36px) с зелёным/серым dot-индикатором, subtitle «В сети» / «Был(а) N мин назад». Real-time через WS. Тап на аватар/имя → страница пользователя.
+
+### Backend
+- `User.lastSeenAt` — обновляется при WS connect/disconnect/ping
+- WS broadcast `user_online_status` при изменении состояния
+- Endpoint `GET /users/:id/online-status`
+- `GroupMessageRead` модель + migration + `POST /chats/groups/:groupId/read`
+- `chat_typing_stop` WS хэндлер
+
+## [1.17.0] — 2026-05-31
+
+### Fixed
+- **Кракозябры в чате**: исправлено некорректное отображение кириллицы в плейсхолдере инпута сообщений и bottomSheet отправки фото (`chat_screen.dart` перекодирован в UTF-8, 17 строк)
+- **Загрузка сообщений**: комплексный фикс WebSocket — ping/pong keepalive (30 сек), refetch при реконнекте, дедупликация WS+HTTP сообщений, устранение утечки подписок при rebuild провайдеров
+- **400 при вставке изображения (десктоп)**: добавлена поддержка Ctrl+V через `pasteboard`; новый метод `uploadChatImageFromBytes`; backend теперь определяет MIME-тип по magic bytes (fallback от `application/octet-stream`)
+- **BottomSheet поиска под toolbar**: добавлен `SafeArea` и корректные ограничения высоты в 5 sheet'ах (поиск пользователей, приглашение в группу, создание группы, редактирование профиля, настройки группы)
+- **Toast кнопки**: цвет текста action-кнопок (`Перейти`, `Скачать`, `Выйти`) исправлен на белый через `snackBarTheme.actionTextColor`
+
+### Backend
+- WebSocket endpoint: добавлен ping→pong хэндлер
+- Upload service: magic-byte детекция MIME, resilient к clipboard paste без расширения файла
+
 ## [1.6.0+7] — 2026-05-29
 
 ### Added

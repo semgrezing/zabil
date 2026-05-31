@@ -47,6 +47,8 @@ class ChatUserProfile {
   final String username;
   final String? displayName;
   final String? avatarUrl;
+  final DateTime? lastSeenAt;
+  final bool isOnline;
   final List<ChatUserAvatarHistoryItem> avatarHistory;
   final List<ChatUserCommonGroup> commonGroups;
 
@@ -55,6 +57,8 @@ class ChatUserProfile {
     required this.username,
     required this.displayName,
     required this.avatarUrl,
+    this.lastSeenAt,
+    this.isOnline = false,
     required this.avatarHistory,
     required this.commonGroups,
   });
@@ -71,6 +75,10 @@ class ChatUserProfile {
       username: user['username']?.toString() ?? '',
       displayName: user['displayName']?.toString(),
       avatarUrl: user['avatarUrl']?.toString(),
+      lastSeenAt: user['lastSeenAt'] != null
+          ? DateTime.tryParse(user['lastSeenAt'].toString())
+          : null,
+      isOnline: user['isOnline'] as bool? ?? false,
       avatarHistory: ((json['avatarHistory'] as List?) ?? const [])
           .map((e) => ChatUserAvatarHistoryItem.fromJson(
               (e as Map).cast<String, dynamic>()))
@@ -79,6 +87,22 @@ class ChatUserProfile {
           .map((e) =>
               ChatUserCommonGroup.fromJson((e as Map).cast<String, dynamic>()))
           .toList(),
+    );
+  }
+
+  ChatUserProfile copyWith({
+    bool? isOnline,
+    DateTime? lastSeenAt,
+  }) {
+    return ChatUserProfile(
+      id: id,
+      username: username,
+      displayName: displayName,
+      avatarUrl: avatarUrl,
+      lastSeenAt: lastSeenAt ?? this.lastSeenAt,
+      isOnline: isOnline ?? this.isOnline,
+      avatarHistory: avatarHistory,
+      commonGroups: commonGroups,
     );
   }
 }

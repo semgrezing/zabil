@@ -6,13 +6,22 @@ import '../models/activity_item.dart';
 import '../providers/activity_provider.dart';
 import '../../../shared/theme/app_colors.dart';
 import '../../../shared/theme/app_dimensions.dart';
+import '../../../shared/widgets/app_chip.dart';
 import '../../../shared/widgets/app_loader.dart';
 
-class ActivityFeedScreen extends ConsumerWidget {
+class ActivityFeedScreen extends ConsumerStatefulWidget {
   const ActivityFeedScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<ActivityFeedScreen> createState() => _ActivityFeedScreenState();
+}
+
+class _ActivityFeedScreenState extends ConsumerState<ActivityFeedScreen> {
+  String? _selectedActor;
+  String? _selectedGroup;
+
+  @override
+  Widget build(BuildContext context) {
     final feedAsync = ref.watch(activityFeedProvider);
 
     return Scaffold(
@@ -30,6 +39,14 @@ class ActivityFeedScreen extends ConsumerWidget {
         loading: () => const AppLoader(),
         error: (err, _) => Center(child: Text('Ошибка: $err')),
         data: (items) {
+          final actors = items.map((item) => item.actorName).toSet().toList()..sort();
+          final groups = items.map((item) => item.groupTitle).toSet().toList()..sort();
+          final filteredItems = items.where((item) {
+            if (_selectedActor != null && item.actorName != _selectedActor) return false;
+            if (_selectedGroup != null && item.groupTitle != _selectedGroup) return false;
+            return true;
+          }).toList();
+
           if (items.isEmpty) {
             return Center(
               child: Column(
@@ -52,16 +69,78 @@ class ActivityFeedScreen extends ConsumerWidget {
           }
           return RefreshIndicator(
             onRefresh: () => ref.read(activityFeedProvider.notifier).refresh(),
-            child: ListView.builder(
+            child: ListView(
               padding: const EdgeInsets.symmetric(
                 vertical: AppSpacing.sm,
                 horizontal: AppSpacing.lg,
               ),
-              itemCount: items.length,
-              itemBuilder: (context, index) => _ActivityTile(
-                item: items[index],
-                onTap: () => _navigate(context, items[index]),
-              ),
+              children: [
+                SizedBox(
+                  height: 36,
+                  child: ListView(
+                    scrollDirection: Axis.horizontal,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.only(right: AppSpacing.sm),
+                        child: AppChip(
+                          label: 'Все',
+                          selected: _selectedActor == null && _selectedGroup == null,
+                          inactiveBackgroundColor: const Color(0xFF1A1A1A),
+                          onPressed: () => setState(() {
+                            _selectedActor = null;
+                            _selectedGroup = null;
+                          }),
+                        ),
+                      ),
+                      ...actors.map(
+                        (actor) => Padding(
+                          padding: const EdgeInsets.only(right: AppSpacing.sm),
+                          child: AppChip(
+                            label: actor,
+                            selected: _selectedActor == actor,
+                            inactiveBackgroundColor: const Color(0xFF1A1A1A),
+                            onPressed: () => setState(() {
+                              _selectedActor = _selectedActor == actor ? null : actor;
+                              if (_selectedActor != null) _selectedGroup = null;
+                            }),
+                          ),
+                        ),
+                      ),
+                      ...groups.map(
+                        (group) => Padding(
+                          padding: const EdgeInsets.only(right: AppSpacing.sm),
+                          child: AppChip(
+                            label: group,
+                            selected: _selectedGroup == group,
+                            inactiveBackgroundColor: const Color(0xFF1A1A1A),
+                            onPressed: () => setState(() {
+                              _selectedGroup = _selectedGroup == group ? null : group;
+                              if (_selectedGroup != null) _selectedActor = null;
+                            }),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.md),
+                if (filteredItems.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.only(top: AppSpacing.xl),
+                    child: Center(
+                      child: Text(
+                        'По выбранным фильтрам активности нет',
+                        style: TextStyle(color: AppColors.fgSoft),
+                      ),
+                    ),
+                  ),
+                ...filteredItems.map(
+                  (item) => _ActivityTile(
+                    item: item,
+                    onTap: () => _navigate(context, item),
+                  ),
+                ),
+              ],
             ),
           );
         },

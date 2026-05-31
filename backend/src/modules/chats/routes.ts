@@ -3,6 +3,7 @@ import { authenticate } from '../../middleware/auth.js'
 import {
   getGroupMessages,
   sendGroupMessage,
+  markGroupRead,
   getPersonalMessages,
   sendPersonalMessage,
   getPersonalConversations,
@@ -58,6 +59,21 @@ export async function chatsRoutes(app: FastifyInstance) {
           imageCompressed: body.imageCompressed,
         })
         return reply.status(201).send(message)
+      } catch (err) {
+        if (err instanceof AppError) return reply.status(err.statusCode).send({ error: err.message, code: err.code })
+        throw err
+      }
+    },
+  )
+
+  app.post(
+    '/groups/:groupId/read',
+    { preHandler: [authenticate] },
+    async (request, reply) => {
+      const { groupId } = request.params as { groupId: string }
+      try {
+        await markGroupRead(app, request.user.userId, groupId)
+        return reply.status(204).send()
       } catch (err) {
         if (err instanceof AppError) return reply.status(err.statusCode).send({ error: err.message, code: err.code })
         throw err

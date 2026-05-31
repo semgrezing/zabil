@@ -1,10 +1,13 @@
 ﻿import 'dart:async';
+import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
+import 'package:pasteboard/pasteboard.dart';
 import 'package:solar_icons/solar_icons.dart';
 
 import '../../../features/auth/providers/auth_provider.dart';
@@ -15,17 +18,19 @@ import '../../groups/services/groups_service.dart';
 import '../../../shared/theme/app_colors.dart';
 import '../../../shared/theme/app_dimensions.dart';
 import '../../../shared/widgets/app_loader.dart';
+import '../../../shared/widgets/typing_indicator.dart';
 import '../models/chat_message.dart';
+import '../models/chat_user_profile.dart';
 import '../providers/chats_provider.dart';
 import 'chat_image_viewer_screen.dart';
 import 'chat_user_profile_screen.dart';
 
-/// ╨г╨╜╨╕╨▓╨╡╤А╤Б╨░╨╗╤М╨╜╤Л╨╣ ╤Н╨║╤А╨░╨╜ ╤З╨░╤В╨░.
+/// Универсальный экран чата.
 ///
-/// ╨Ю╨┤╨╕╨╜ ╨╕╨╖ ╤В╤А╤С╤Е ╤А╨╡╨╢╨╕╨╝╨╛╨▓:
-/// - group: `groupId` ╨╖╨░╨┤╨░╨╜, `noteId` = null тЖТ ╤З╨░╤В ╨│╤А╤Г╨┐╨┐╤Л
-/// - note:  `groupId` + `noteId` тЖТ ╤З╨░╤В ╨╖╨░╨╝╨╡╤В╨║╨╕ (filtered view)
-/// - personal: `userId` ╨╖╨░╨┤╨░╨╜ тЖТ 1:1 ╤З╨░╤В
+/// Один из трёх режимов:
+/// - group: `groupId` задан, `noteId` = null → чат группы
+/// - note:  `groupId` + `noteId` → чат заметки (filtered view)
+/// - personal: `userId` задан → 1:1 чат
 class ChatScreen extends ConsumerStatefulWidget {
   final String? groupId;
   final String? noteId;
@@ -55,6 +60,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   StreamSubscription<WsEvent>? _wsSub;
   GroupModel? _groupMeta;
   final Map<String, _TypingUser> _typingUsers = {};
+  Timer? _typingDebounce;
+
+  // Personal chat peer profile (avatar, online status)
+  ChatUserProfile? _peerProfile;
+
+  static bool get _isDesktop =>
+      Platform.isWindows || Platform.isLinux || Platform.isMacOS;
 
   bool get _isTopLevelGroupChat => widget.groupId != null && widget.noteId == null;
 
@@ -77,14 +89,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   @override
   void initState() {
     super.initState();
-    _subscribeTyping();
+    _subscribeWsEvents();
     _loadGroupMeta();
-    // Mark-as-read ╨┤╨╗╤П ╨╗╨╕╤З╨╜╨╛╨│╨╛ ╤З╨░╤В╨░ ╨┐╤А╨╕ ╨╛╤В╨║╤А╤Л╤В╨╕╨╕
+    // Mark-as-read и загрузка профиля для личного чата при открытии
     if (widget.userId != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         ref
             .read(personalChatProvider(widget.userId!).notifier)
             .markRead();
+        _loadPeerProfile();
       });
     }
   }
@@ -92,6 +105,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   @override
   void dispose() {
     _wsSub?.cancel();
+    _typingDebounce?.cancel();
     for (final entry in _typingUsers.values) {
       entry.timer.cancel();
     }
@@ -100,27 +114,79 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     super.dispose();
   }
 
-  void _subscribeTyping() {
+  void _subscribeWsEvents() {
     final ws = ref.read(wsClientProvider);
     final me = ref.read(authStateProvider).valueOrNull?.user?.id;
     _wsSub = ws.events.listen((event) {
-      if (event is! ChatTypingEvent) return;
-      if (event.kind == 'group' && widget.groupId != null) {
-        final data = event.data;
-        if (data['groupId']?.toString() != widget.groupId) return;
-        final senderId = data['senderId']?.toString();
-        if (senderId == null || senderId == me) return;
-        final displayName = data['displayName']?.toString();
-        _upsertTyping(senderId, (displayName == null || displayName.isEmpty) ? 'Пользователь' : displayName);
+      // Online status updates for peer in personal chat
+      if (event is UserOnlineStatusEvent && widget.userId == event.userId) {
+        if (!mounted) return;
+        setState(() {
+          _peerProfile = _peerProfile?.copyWith(
+            isOnline: event.isOnline,
+            lastSeenAt: event.lastSeenAt ?? _peerProfile?.lastSeenAt,
+          );
+        });
       }
-      if (event.kind == 'personal' && widget.userId != null) {
-        final data = event.data;
-        final senderId = data['senderId']?.toString();
-        if (senderId == null || senderId == me || senderId != widget.userId) return;
-        final displayName = data['displayName']?.toString();
-        _upsertTyping(senderId, (displayName == null || displayName.isEmpty) ? 'Собеседник' : displayName);
+      if (event is ChatTypingEvent) {
+        if (event.kind == 'group' && widget.groupId != null) {
+          final data = event.data;
+          if (data['groupId']?.toString() != widget.groupId) return;
+          final senderId = data['senderId']?.toString();
+          if (senderId == null || senderId == me) return;
+          final displayName = data['displayName']?.toString();
+          _upsertTyping(senderId, (displayName == null || displayName.isEmpty) ? 'Пользователь' : displayName);
+        }
+        if (event.kind == 'personal' && widget.userId != null) {
+          final data = event.data;
+          final senderId = data['senderId']?.toString();
+          if (senderId == null || senderId == me || senderId != widget.userId) return;
+          final displayName = data['displayName']?.toString();
+          _upsertTyping(senderId, (displayName == null || displayName.isEmpty) ? 'Собеседник' : displayName);
+        }
+      } else if (event is ChatStoppedTypingEvent) {
+        if (event.kind == 'group' && widget.groupId != null) {
+          final data = event.data;
+          if (data['groupId']?.toString() != widget.groupId) return;
+          final senderId = data['senderId']?.toString();
+          if (senderId == null || senderId == me) return;
+          _removeTyping(senderId);
+        }
+        if (event.kind == 'personal' && widget.userId != null) {
+          final data = event.data;
+          final senderId = data['senderId']?.toString();
+          if (senderId == null || senderId == me || senderId != widget.userId) return;
+          _removeTyping(senderId);
+        }
       }
     });
+  }
+
+  void _removeTyping(String userId) {
+    _typingUsers[userId]?.timer.cancel();
+    if (!mounted) return;
+    setState(() => _typingUsers.remove(userId));
+  }
+
+  void _sendTypingStop() {
+    final ws = ref.read(wsClientProvider);
+    if (widget.groupId != null) {
+      ws.sendChatTypingStopGroup(widget.groupId!);
+    } else if (widget.userId != null) {
+      ws.sendChatTypingStopPersonal(widget.userId!);
+    }
+  }
+
+  Future<void> _loadPeerProfile() async {
+    if (widget.userId == null) return;
+    try {
+      final service = ref.read(chatsServiceProvider);
+      final profile = await service.getUserProfile(widget.userId!);
+      if (!mounted) return;
+      setState(() => _peerProfile = profile);
+    } catch (_) {
+      // noop: avatar/online indicator simply won't show if unavailable
+    }
   }
 
   Future<void> _loadGroupMeta() async {
@@ -151,6 +217,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   Future<void> _send() async {
     final text = _inputCtrl.text.trim();
     if (text.isEmpty || _sending) return;
+    // Stop typing indicator immediately on send
+    _typingDebounce?.cancel();
+    _typingDebounce = null;
+    _sendTypingStop();
     setState(() => _sending = true);
     final messenger = ScaffoldMessenger.of(context);
     try {
@@ -165,8 +235,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             .send(body: text);
       }
       _inputCtrl.clear();
-      // ╨б╨┐╨╕╤Б╨╛╨║ ╤А╨╡╨╜╨┤╨╡╤А╨╕╤В╤Б╤П reverse=true, ╨╜╨╛╨▓╨╛╨╡ ╤Б╨╛╨╛╨▒╤Й╨╡╨╜╨╕╨╡ ╨▓ ╨╜╨░╤З╨░╨╗╨╡ тАФ
-      // ╨┐╤А╨╛╨║╤А╤Г╤З╨╕╨▓╨░╨╡╨╝ ╨║ ╨╜╨░╤З╨░╨╗╤Г ╤Б╨┐╨╕╤Б╨║╨░ (╨▓╨╕╨╖╤Г╨░╨╗╤М╨╜╨╛ ╨▓╨╜╨╕╨╖).
+      // Список рендерится reverse=true, новое сообщение в начале —
+      // прокручиваем к началу списка (визуально вниз).
       if (_scrollCtrl.hasClients) {
         _scrollCtrl.animateTo(
           0,
@@ -176,7 +246,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       }
     } catch (e) {
       messenger.showSnackBar(
-        SnackBar(content: Text('╨Э╨╡ ╤Г╨┤╨░╨╗╨╛╤Б╤М ╨╛╤В╨┐╤А╨░╨▓╨╕╤В╤М: $e')),
+        SnackBar(content: Text('Не удалось отправить: $e')),
       );
     } finally {
       if (mounted) setState(() => _sending = false);
@@ -234,7 +304,94 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('╨Э╨╡ ╤Г╨┤╨░╨╗╨╛╤Б╤М ╨╛╤В╨┐╤А╨░╨▓╨╕╤В╤М ╨╕╨╖╨╛╨▒╤А╨░╨╢╨╡╨╜╨╕╤П: $e')),
+        SnackBar(content: Text('Не удалось отправить изображения: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
+  }
+
+  /// Handle Ctrl+V paste on desktop: check clipboard for image bytes.
+  Future<void> _handleDesktopPaste() async {
+    if (_sending || !_isDesktop) return;
+
+    try {
+      final imageBytes = await Pasteboard.image;
+      if (imageBytes == null || imageBytes.isEmpty) return;
+      // Clipboard contained an image -- send it with compression by default.
+      await _sendPastedImage(imageBytes);
+    } catch (_) {
+      // Clipboard did not contain an image or read failed; let the TextField
+      // handle the paste as plain text (default behaviour).
+    }
+  }
+
+  /// Upload and send raw image bytes obtained from clipboard paste.
+  Future<void> _sendPastedImage(Uint8List imageBytes) async {
+    if (_sending) return;
+
+    setState(() => _sending = true);
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final service = ref.read(chatsServiceProvider);
+
+      // Detect MIME type from magic bytes.
+      String mimeType = 'image/png';
+      String filename = 'pasted_image.png';
+      if (imageBytes.length >= 3 &&
+          imageBytes[0] == 0xFF &&
+          imageBytes[1] == 0xD8 &&
+          imageBytes[2] == 0xFF) {
+        mimeType = 'image/jpeg';
+        filename = 'pasted_image.jpg';
+      } else if (imageBytes.length >= 4 &&
+          imageBytes[0] == 0x52 &&
+          imageBytes[1] == 0x49 &&
+          imageBytes[2] == 0x46 &&
+          imageBytes[3] == 0x46) {
+        mimeType = 'image/webp';
+        filename = 'pasted_image.webp';
+      }
+
+      final upload = await service.uploadChatImageFromBytes(
+        imageBytes,
+        compressed: true,
+        filename: filename,
+        contentType: mimeType,
+      );
+
+      final textToAttach = _inputCtrl.text.trim();
+      if (widget._isGroup) {
+        await ref
+            .read(groupChatProvider(GroupChatKey(widget.groupId!, widget.noteId))
+                .notifier)
+            .send(
+              body: textToAttach.isNotEmpty ? textToAttach : null,
+              imageUrl: upload['url'] as String?,
+              imageMimeType: upload['mimeType'] as String?,
+              imageSize: (upload['fileSize'] as num?)?.toInt(),
+              imageCompressed: upload['compressed'] as bool?,
+            );
+      } else {
+        await ref.read(personalChatProvider(widget.userId!).notifier).send(
+              body: textToAttach.isNotEmpty ? textToAttach : null,
+              imageUrl: upload['url'] as String?,
+              imageMimeType: upload['mimeType'] as String?,
+              imageSize: (upload['fileSize'] as num?)?.toInt(),
+              imageCompressed: upload['compressed'] as bool?,
+            );
+      }
+      _inputCtrl.clear();
+      if (_scrollCtrl.hasClients) {
+        _scrollCtrl.animateTo(
+          0,
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOut,
+        );
+      }
+    } catch (e) {
+      messenger.showSnackBar(
+        SnackBar(content: Text('Не удалось отправить изображение: $e')),
       );
     } finally {
       if (mounted) setState(() => _sending = false);
@@ -251,14 +408,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           children: [
             ListTile(
               leading: const Icon(SolarIconsOutline.gallery),
-              title: const Text('╨Ю╤В╨┐╤А╨░╨▓╨╕╤В╤М ╤Б╨╛ ╤Б╨╢╨░╤В╨╕╨╡╨╝'),
-              subtitle: const Text('╨С╤Л╤Б╤В╤А╨╡╨╡ ╨╛╤В╨┐╤А╨░╨▓╨║╨░, ╨╝╨╡╨╜╤М╤И╨╡ ╤А╨░╨╖╨╝╨╡╤А'),
+              title: const Text('Отправить со сжатием'),
+              subtitle: const Text('Быстрее отправка, меньше размер'),
               onTap: () => Navigator.of(ctx).pop(true),
             ),
             ListTile(
               leading: const Icon(SolarIconsOutline.gallery),
-              title: const Text('╨Ю╤В╨┐╤А╨░╨▓╨╕╤В╤М ╨▒╨╡╨╖ ╤Б╨╢╨░╤В╨╕╤П'),
-              subtitle: const Text('╨Ю╤А╨╕╨│╨╕╨╜╨░╨╗╤М╨╜╨╛╨╡ ╨║╨░╤З╨╡╤Б╤В╨▓╨╛'),
+              title: const Text('Отправить без сжатия'),
+              subtitle: const Text('Оригинальное качество'),
               onTap: () => Navigator.of(ctx).pop(false),
             ),
             const SizedBox(height: 8),
@@ -268,63 +425,104 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     );
   }
 
+  PreferredSizeWidget _buildAppBar(BuildContext context) {
+    // Personal 1:1 chat — show avatar + name + online status
+    if (widget.userId != null) {
+      return AppBar(
+        leadingWidth: 56,
+        leading: GestureDetector(
+          onTap: () => context.push('/users/${widget.userId}'),
+          child: Padding(
+            padding: const EdgeInsets.only(left: 8),
+            child: _PeerAvatarWithDot(
+              profile: _peerProfile,
+              title: widget.title,
+              resolveUrl: _resolveImageUrl,
+            ),
+          ),
+        ),
+        title: GestureDetector(
+          onTap: () => context.push('/users/${widget.userId}'),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(widget.title, overflow: TextOverflow.ellipsis),
+              _PeerOnlineSubtitle(profile: _peerProfile),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // Group / note chat — original layout
+    return AppBar(
+      title: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (widget.groupId != null)
+            GestureDetector(
+              onTap: () => context.push('/groups/${widget.groupId}'),
+              child: Text(widget.title),
+            )
+          else
+            Text(widget.title),
+          if (_groupHintLabel != null)
+            Text(
+              _groupHintLabel!,
+              style: TextStyle(
+                fontSize: 12,
+                color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.7),
+              ),
+            ),
+        ],
+      ),
+      actions: [
+        if (widget.noteId != null && widget.groupId != null)
+          IconButton(
+            icon: const Icon(SolarIconsOutline.chatRound),
+            tooltip: 'Открыть чат группы',
+            onPressed: () {
+              context.push(
+                '/chats/group/${widget.groupId}?title=${Uri.encodeComponent(widget.subtitle ?? 'Группа')}',
+              );
+            },
+          ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+      appBar: _buildAppBar(context),
+      body: _wrapWithPasteHandler(
+        child: Column(
           children: [
-            if (widget.groupId != null)
-              GestureDetector(
-                onTap: () => context.push('/groups/${widget.groupId}'),
-                child: Text(widget.title),
-              )
-            else
-              Text(widget.title),
-            if ((_typingLabel != null && _isTopLevelGroupChat) || _groupHintLabel != null)
-              Text(
-                (_typingLabel != null && _isTopLevelGroupChat)
-                    ? _typingLabel!
-                    : _groupHintLabel!,
-                style: TextStyle(
-                  fontSize: 12,
-                  color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.7),
-                ),
-              ),
+            Expanded(child: _buildMessages(context)),
+            _TypingStrip(label: _typingLabel),
+            SafeArea(top: false, child: _buildComposer(context)),
           ],
         ),
-        actions: [
-          if (widget.noteId != null && widget.groupId != null)
-            IconButton(
-              icon: const Icon(SolarIconsOutline.chatRound),
-              tooltip: '╨Ю╤В╨║╤А╤Л╤В╤М ╤З╨░╤В ╨│╤А╤Г╨┐╨┐╤Л',
-              onPressed: () {
-                context.push(
-                  '/chats/group/${widget.groupId}?title=${Uri.encodeComponent(widget.subtitle ?? '╨У╤А╤Г╨┐╨┐╨░')}',
-                );
-              },
-            ),
-        ],
       ),
-      body: Column(
-        children: [
-          Expanded(child: _buildMessages(context)),
-          if (_typingLabel != null && !_isTopLevelGroupChat)
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.fromLTRB(16, 4, 16, 6),
-              child: Text(
-                _typingLabel!,
-                style: const TextStyle(
-                  fontSize: 12,
-                  color: AppColors.fgSoft,
-                ),
-              ),
-            ),
-          SafeArea(top: false, child: _buildComposer(context)),
-        ],
-      ),
+    );
+  }
+
+  /// On desktop, wrap the body with a Focus widget that intercepts Ctrl+V
+  /// and checks the clipboard for image content before the TextField handles it.
+  Widget _wrapWithPasteHandler({required Widget child}) {
+    if (!_isDesktop) return child;
+    return Focus(
+      onKeyEvent: (node, event) {
+        if (event is KeyDownEvent &&
+            event.logicalKey == LogicalKeyboardKey.keyV &&
+            HardwareKeyboard.instance.isControlPressed) {
+          _handleDesktopPaste();
+        }
+        // Always return ignored so the TextField still receives normal
+        // keyboard input (including text paste when clipboard has no image).
+        return KeyEventResult.ignored;
+      },
+      child: child,
     );
   }
 
@@ -337,14 +535,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       final async = ref.watch(groupChatProvider(key));
       return async.when(
         loading: () => const AppLoader(),
-        error: (e, _) => Center(child: Text('╨Ю╤И╨╕╨▒╨║╨░ ╨╖╨░╨│╤А╤Г╨╖╨║╨╕: $e')),
+        error: (e, _) => Center(child: Text('Ошибка загрузки: $e')),
         data: (messages) => _renderGroup(context, messages, currentUserId),
       );
     } else {
       final async = ref.watch(personalChatProvider(widget.userId!));
       return async.when(
         loading: () => const AppLoader(),
-        error: (e, _) => Center(child: Text('╨Ю╤И╨╕╨▒╨║╨░ ╨╖╨░╨│╤А╤Г╨╖╨║╨╕: $e')),
+        error: (e, _) => Center(child: Text('Ошибка загрузки: $e')),
         data: (messages) => _renderPersonal(context, messages, currentUserId),
       );
     }
@@ -360,7 +558,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         child: Padding(
           padding: EdgeInsets.all(32),
           child: Text(
-            '╨б╨╛╨╛╨▒╤Й╨╡╨╜╨╕╨╣ ╨┐╨╛╨║╨░ ╨╜╨╡╤В. ╨Э╨░╨┐╨╕╤И╨╕╤В╨╡ ╨┐╨╡╤А╨▓╤Л╨╝.',
+            'Сообщений пока нет. Напишите первым.',
             style: TextStyle(color: AppColors.fgSoft),
             textAlign: TextAlign.center,
           ),
@@ -390,11 +588,16 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                     ),
                   );
                 },
+          deliveryStatus: mine
+              ? (m.readCount > 0
+                  ? _MessageDeliveryStatus.read
+                  : _MessageDeliveryStatus.sent)
+              : null,
           noteTitle: m.noteTitle,
           noteColorLabel: m.noteColorLabel,
           onNoteTap: (m.noteId != null && widget.noteId == null)
               ? () => context.push(
-                    '/chats/note/${m.noteId}?groupId=${widget.groupId}&title=${Uri.encodeComponent(m.noteTitle ?? '╨Ч╨░╨╝╨╡╤В╨║╨░')}&groupTitle=${Uri.encodeComponent(widget.title)}',
+                    '/chats/note/${m.noteId}?groupId=${widget.groupId}&title=${Uri.encodeComponent(m.noteTitle ?? 'Заметка')}&groupTitle=${Uri.encodeComponent(widget.title)}',
                   )
               : null,
         );
@@ -412,7 +615,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         child: Padding(
           padding: EdgeInsets.all(32),
           child: Text(
-            '╨Э╨░╤З╨╜╨╕╤В╨╡ ╨┤╨╕╨░╨╗╨╛╨│ тАФ ╨╜╨░╨┐╨╕╤И╨╕╤В╨╡ ╨┐╨╡╤А╨▓╨╛╨╡ ╤Б╨╛╨╛╨▒╤Й╨╡╨╜╨╕╨╡.',
+            'Начните диалог — напишите первое сообщение.',
             style: TextStyle(color: AppColors.fgSoft),
             textAlign: TextAlign.center,
           ),
@@ -451,7 +654,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         children: [
           IconButton(
             icon: const Icon(SolarIconsOutline.gallery),
-            tooltip: '╨Ш╨╖╨╛╨▒╤А╨░╨╢╨╡╨╜╨╕╤П',
+            tooltip: 'Изображения',
             onPressed: _sending ? null : _pickAndSendImages,
           ),
           Expanded(
@@ -461,17 +664,29 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               maxLines: 5,
               textInputAction: TextInputAction.send,
               onChanged: (value) {
-                if (value.trim().isEmpty) return;
+                if (value.trim().isEmpty) {
+                  // Field cleared — stop typing immediately
+                  _typingDebounce?.cancel();
+                  _typingDebounce = null;
+                  _sendTypingStop();
+                  return;
+                }
                 final ws = ref.read(wsClientProvider);
                 if (widget.groupId != null) {
                   ws.sendChatTypingGroup(widget.groupId!);
                 } else if (widget.userId != null) {
                   ws.sendChatTypingPersonal(widget.userId!);
                 }
+                // Schedule typing_stop after 2s of inactivity
+                _typingDebounce?.cancel();
+                _typingDebounce = Timer(const Duration(seconds: 2), () {
+                  _typingDebounce = null;
+                  _sendTypingStop();
+                });
               },
               onSubmitted: (_) => _send(),
               decoration: const InputDecoration(
-                hintText: '╨б╨╛╨╛╨▒╤Й╨╡╨╜╨╕╨╡',
+                hintText: 'Сообщение',
                 filled: true,
               ),
             ),
@@ -793,6 +1008,66 @@ class _MessageBubble extends StatelessWidget {
   }
 }
 
+/// Slim animated strip that appears between the message list and the input bar
+/// while someone is typing. Fades and slides in/out smoothly.
+class _TypingStrip extends StatelessWidget {
+  final String? label;
+
+  const _TypingStrip({required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedSize(
+      duration: const Duration(milliseconds: 200),
+      curve: Curves.easeOut,
+      child: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 200),
+        transitionBuilder: (child, animation) {
+          return FadeTransition(
+            opacity: animation,
+            child: SlideTransition(
+              position: Tween<Offset>(
+                begin: const Offset(0, 0.5),
+                end: Offset.zero,
+              ).animate(animation),
+              child: child,
+            ),
+          );
+        },
+        child: label == null
+            ? const SizedBox.shrink(key: ValueKey('empty'))
+            : Container(
+                key: const ValueKey('typing'),
+                width: double.infinity,
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+                decoration: const BoxDecoration(
+                  border: Border(
+                    top: BorderSide(color: AppColors.borderSubtle),
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const TypingIndicator(dotSize: 5),
+                    const SizedBox(width: 6),
+                    Flexible(
+                      child: Text(
+                        label!,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: AppColors.fgSoft,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+      ),
+    );
+  }
+}
+
 class _TypingUser {
   final String name;
   final Timer timer;
@@ -801,3 +1076,120 @@ class _TypingUser {
 }
 
 enum _MessageDeliveryStatus { sent, read }
+
+// ─── Personal chat AppBar helpers ────────────────────────────────────────────
+
+/// CircleAvatar with a small online-dot badge for the personal chat AppBar.
+class _PeerAvatarWithDot extends StatelessWidget {
+  final ChatUserProfile? profile;
+  final String title;
+  final String? Function(String?) resolveUrl;
+
+  const _PeerAvatarWithDot({
+    required this.profile,
+    required this.title,
+    required this.resolveUrl,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final avatarUrl = resolveUrl(profile?.avatarUrl);
+    final initials = (profile?.displayLabel ?? title).isNotEmpty
+        ? (profile?.displayLabel ?? title)[0].toUpperCase()
+        : '?';
+
+    return SizedBox(
+      width: 36,
+      height: 36,
+      child: Stack(
+        children: [
+          CircleAvatar(
+            radius: 18,
+            backgroundImage: avatarUrl != null ? NetworkImage(avatarUrl) : null,
+            backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+            child: avatarUrl == null
+                ? Text(initials, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600))
+                : null,
+          ),
+          Positioned(
+            right: 0,
+            bottom: 0,
+            child: Container(
+              width: 11,
+              height: 11,
+              decoration: BoxDecoration(
+                color: (profile?.isOnline ?? false)
+                    ? const Color(0xFF4CAF50)
+                    : Colors.grey,
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: Theme.of(context).scaffoldBackgroundColor,
+                  width: 2,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Subtitle text: "В сети" or "Был(а) X мин/ч назад" for personal chat AppBar.
+class _PeerOnlineSubtitle extends StatelessWidget {
+  final ChatUserProfile? profile;
+
+  const _PeerOnlineSubtitle({required this.profile});
+
+  @override
+  Widget build(BuildContext context) {
+    final subtitleStyle = TextStyle(
+      fontSize: 11,
+      color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.65),
+    );
+
+    if (profile == null) {
+      return const SizedBox.shrink();
+    }
+
+    if (profile!.isOnline) {
+      return Text(
+        'В сети',
+        style: subtitleStyle.copyWith(color: const Color(0xFF4CAF50)),
+      );
+    }
+
+    final lastSeen = profile!.lastSeenAt;
+    if (lastSeen == null) {
+      return Text('Не в сети', style: subtitleStyle);
+    }
+
+    final diff = DateTime.now().difference(lastSeen);
+    final String ago;
+    if (diff.inMinutes < 1) {
+      ago = 'только что';
+    } else if (diff.inMinutes < 60) {
+      ago = '${diff.inMinutes} мин назад';
+    } else if (diff.inHours < 24) {
+      final h = diff.inHours;
+      ago = '$h ${_hoursLabel(h)} назад';
+    } else {
+      final d = diff.inDays;
+      ago = '$d ${_daysLabel(d)} назад';
+    }
+
+    return Text('Был(а) $ago', style: subtitleStyle);
+  }
+
+  static String _hoursLabel(int h) {
+    if (h % 10 == 1 && h % 100 != 11) return 'ч';
+    if (h % 10 >= 2 && h % 10 <= 4 && (h % 100 < 10 || h % 100 >= 20)) return 'ч';
+    return 'ч';
+  }
+
+  static String _daysLabel(int d) {
+    if (d % 10 == 1 && d % 100 != 11) return 'день';
+    if (d % 10 >= 2 && d % 10 <= 4 && (d % 100 < 10 || d % 100 >= 20)) return 'дня';
+    return 'дней';
+  }
+}

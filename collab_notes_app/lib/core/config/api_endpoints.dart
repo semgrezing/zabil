@@ -11,6 +11,7 @@ class ApiEndpoints {
   static const String usersSearch = '/users/search';
   static const String userMe = '/users/me';
   static String userPublicProfile(String id) => '/users/$id/profile';
+  static String userOnlineStatus(String id) => '/users/$id/online-status';
   static const String userAvatar = '/users/me/avatar';
   static const String userAvatarHistory = '/users/me/avatar/history';
   static String userAvatarHistoryItem(String historyId) => '/users/me/avatar/history/$historyId';
@@ -61,6 +62,7 @@ class ApiEndpoints {
 
   // Chats (Stage 7)
   static String groupChatMessages(String groupId) => '/chats/groups/$groupId/messages';
+  static String groupMarkRead(String groupId) => '/chats/groups/$groupId/read';
   static const String personalChats = '/chats/personal';
   static String personalMessages(String userId) => '/chats/personal/$userId/messages';
   static String personalMarkRead(String userId) => '/chats/personal/$userId/read';

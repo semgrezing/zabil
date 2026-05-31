@@ -82,11 +82,19 @@ class AuthService {
     }
   }
 
-  Future<UserModel> updateProfile({String? displayName}) async {
+  Future<UserModel> updateProfile({
+    String? displayName,
+    bool? notePushEnabled,
+    bool? checklistPushEnabled,
+    bool? releasePushEnabled,
+  }) async {
     final response = await _dio.patch(
       ApiEndpoints.userMe,
       data: {
-        'displayName': displayName,
+        if (displayName != null || displayName == null) 'displayName': displayName,
+        if (notePushEnabled != null) 'notePushEnabled': notePushEnabled,
+        if (checklistPushEnabled != null) 'checklistPushEnabled': checklistPushEnabled,
+        if (releasePushEnabled != null) 'releasePushEnabled': releasePushEnabled,
       },
     );
     return UserModel.fromJson(response.data as Map<String, dynamic>);

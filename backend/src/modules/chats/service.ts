@@ -5,6 +5,7 @@ import {
   notifyNewGroupMessage,
   notifyNewPersonalMessage,
 } from '../notifications/service.js'
+import { computeIsOnline } from '../users/service.js'
 import { isOnline, sendToUser } from './wsHub.js'
 
 // ─── Group / Note chat ─────────────────────────────────────────────────────
@@ -18,7 +19,7 @@ export async function getGroupMessages(
   const member = await requireGroupMember(app, userId, groupId)
   if (!member) throw errors.forbidden()
   const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200)
-  return app.prisma.groupChatMessage.findMany({
+  const messages = await app.prisma.groupChatMessage.findMany({
     where: {
       groupId,
       ...(opts.noteId !== undefined && opts.noteId !== null ? { noteId: opts.noteId } : {}),
@@ -27,10 +28,18 @@ export async function getGroupMessages(
     include: {
       sender: { select: { id: true, username: true, displayName: true, avatarUrl: true } },
       note: { select: { id: true, title: true, colorLabel: true } },
+      reads: { select: { userId: true } },
     },
     orderBy: { createdAt: 'desc' },
     take: limit,
   })
+  // Attach read metadata: readCount (excluding sender) and isReadByMe
+  return messages.map((m) => ({
+    ...m,
+    readCount: m.reads.filter((r) => r.userId !== m.senderId).length,
+    isReadByMe: m.reads.some((r) => r.userId === userId),
+    reads: undefined,
+  }))
 }
 
 export async function sendGroupMessage(
@@ -101,6 +110,8 @@ export async function sendGroupMessage(
       imageMimeType: message.imageMimeType,
       imageSize: message.imageSize,
       imageCompressed: message.imageCompressed,
+      readCount: 0,
+      isReadByMe: false,
       createdAt: message.createdAt.toISOString(),
     },
   }
@@ -247,7 +258,13 @@ export async function getPersonalConversations(app: FastifyInstance, userId: str
   if (userIds.length === 0) return []
   const users = await app.prisma.user.findMany({
     where: { id: { in: userIds } },
-    select: { id: true, username: true, displayName: true, avatarUrl: true },
+    select: {
+      id: true,
+      username: true,
+      displayName: true,
+      avatarUrl: true,
+      lastSeenAt: true,
+    },
   })
   const userMap = new Map(users.map((u) => [u.id, u]))
   return Array.from(conversations.values()).map((c) => ({
@@ -256,10 +273,79 @@ export async function getPersonalConversations(app: FastifyInstance, userId: str
       username: userMap.get(c.otherUserId)?.username ?? '?',
       displayName: userMap.get(c.otherUserId)?.displayName ?? null,
       avatarUrl: userMap.get(c.otherUserId)?.avatarUrl ?? null,
+      lastSeenAt: userMap.get(c.otherUserId)?.lastSeenAt?.toISOString() ?? null,
+      isOnline: computeIsOnline(userMap.get(c.otherUserId)?.lastSeenAt ?? null),
     },
     lastMessage: c.lastMessage,
     unreadCount: c.unreadCount,
   }))
+}
+
+export async function markGroupRead(
+  app: FastifyInstance,
+  userId: string,
+  groupId: string,
+) {
+  const member = await requireGroupMember(app, userId, groupId)
+  if (!member) throw errors.forbidden()
+
+  // Find all messages in this group NOT sent by the current user that haven't been read by them yet
+  const unreadMessages = await app.prisma.groupChatMessage.findMany({
+    where: {
+      groupId,
+      senderId: { not: userId },
+      reads: { none: { userId } },
+    },
+    select: { id: true, senderId: true },
+  })
+
+  if (unreadMessages.length === 0) return
+
+  const readAt = new Date()
+
+  // Bulk upsert reads
+  await app.prisma.groupMessageRead.createMany({
+    data: unreadMessages.map((m) => ({
+      messageId: m.id,
+      userId,
+      readAt,
+    })),
+    skipDuplicates: true,
+  })
+
+  // Notify each distinct sender that their messages were read
+  const senderIds = [...new Set(unreadMessages.map((m) => m.senderId))]
+  const messageIdsBySender = new Map<string, string[]>()
+  for (const m of unreadMessages) {
+    const list = messageIdsBySender.get(m.senderId) ?? []
+    list.push(m.id)
+    messageIdsBySender.set(m.senderId, list)
+  }
+
+  for (const senderId of senderIds) {
+    const payload = {
+      type: 'read_receipt',
+      kind: 'group',
+      data: {
+        groupId,
+        readerId: userId,
+        messageIds: messageIdsBySender.get(senderId) ?? [],
+        readAt: readAt.toISOString(),
+      },
+    }
+    sendToUser(senderId, payload)
+  }
+  // Also echo to the reader's own devices so other sessions update
+  sendToUser(userId, {
+    type: 'read_receipt',
+    kind: 'group',
+    data: {
+      groupId,
+      readerId: userId,
+      messageIds: unreadMessages.map((m) => m.id),
+      readAt: readAt.toISOString(),
+    },
+  })
 }
 
 export async function markPersonalRead(

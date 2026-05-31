@@ -12,6 +12,7 @@ import { requireGroupMember } from '../../middleware/auth.js'
 import {
   notifyNewNote,
   notifyNoteUpdated,
+  notifyChecklistCompleted,
 } from '../notifications/service.js'
 
 async function ensurePersonalGroup(app: FastifyInstance, userId: string) {
@@ -108,7 +109,7 @@ export async function createNote(app: FastifyInstance, userId: string, dto: Crea
     : dto.groupId
 
   if (!targetGroupId) {
-    throw errors.badRequest('Не указан контекст заметки')
+    throw errors.badRequest('Не указана группа заметки')
   }
 
   const targetGroup = await app.prisma.group.findUnique({
@@ -206,7 +207,7 @@ export async function moveNote(app: FastifyInstance, noteId: string, userId: str
     : dto.targetGroupId
 
   if (!targetGroupId) {
-    throw errors.badRequest('Не указан целевой контекст')
+    throw errors.badRequest('Не указана целевая группа')
   }
 
   const targetGroup = await app.prisma.group.findUnique({
@@ -302,17 +303,43 @@ export async function updateChecklistItem(
 ) {
   const note = await app.prisma.note.findFirst({
     where: { id: noteId, deletedAt: null },
-    include: { group: { select: { title: true, isPersonal: true } } },
+    include: {
+      group: { select: { title: true, isPersonal: true } },
+      checklistItems: { select: { id: true, completed: true } },
+    },
   })
   if (!note) throw errors.notFound('Заметка')
 
   const isMember = await requireGroupMember(app, userId, note.groupId)
   if (!isMember) throw errors.forbidden()
 
+  const wasFullyCompleted =
+    note.checklistItems.length > 0 &&
+    note.checklistItems.every((checklistItem) => checklistItem.completed)
+
   const item = await app.prisma.noteChecklistItem.update({
     where: { id: itemId },
     data: dto,
   })
+
+  if (!note.group.isPersonal && dto.completed == true && !wasFullyCompleted) {
+    const allCompletedNow = note.checklistItems.every((checklistItem) => {
+      if (checklistItem.id == itemId) return true
+      return checklistItem.completed
+    })
+
+    if (allCompletedNow) {
+      notifyChecklistCompleted(app, {
+        noteId,
+        groupId: note.groupId,
+        title: note.title,
+        updatedBy: userId,
+        groupTitle: note.group.title,
+      }).catch((e: unknown) =>
+        console.error('[notify] notifyChecklistCompleted:', e),
+      )
+    }
+  }
 
   return item
 }

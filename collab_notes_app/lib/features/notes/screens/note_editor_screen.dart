@@ -772,7 +772,7 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
     if (contexts.isEmpty) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Нет доступных контекстов для переноса')),
+        const SnackBar(content: Text('Нет доступных групп для переноса')),
       );
       return;
     }
@@ -1011,7 +1011,7 @@ class _NewNoteEditorState extends ConsumerState<_NewNoteEditor> {
     }
     if (!personal && groupId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Контекст не выбран')),
+        const SnackBar(content: Text('Группа не выбрана')),
       );
       return;
     }

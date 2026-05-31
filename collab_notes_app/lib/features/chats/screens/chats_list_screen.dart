@@ -62,6 +62,7 @@ class ChatsListScreen extends ConsumerWidget {
     final picked = await showModalBottomSheet<Map<String, String>>(
       context: context,
       isScrollControlled: true,
+      showDragHandle: true,
       useRootNavigator: true,
       builder: (_) => const _UserSearchSheet(),
     );
@@ -120,20 +121,44 @@ class _PersonalTab extends ConsumerWidget {
                       ? 'Фото'
                       : '';
               return ListTile(
-                leading: CircleAvatar(
-                  backgroundImage:
-                      avatarUrl != null ? NetworkImage(avatarUrl) : null,
-                  child: avatarUrl == null
-                      ? Text(displayName.isNotEmpty
-                          ? displayName[0].toUpperCase()
-                          : '?')
-                      : null,
+                leading: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    CircleAvatar(
+                      backgroundImage:
+                          avatarUrl != null ? NetworkImage(avatarUrl) : null,
+                      child: avatarUrl == null
+                          ? Text(displayName.isNotEmpty
+                              ? displayName[0].toUpperCase()
+                              : '?')
+                          : null,
+                    ),
+                    Positioned(
+                      right: -1,
+                      bottom: -1,
+                      child: _OnlineDot(isOnline: c.isOnline),
+                    ),
+                  ],
                 ),
                 title: Text(displayName),
-                subtitle: Text(
-                  preview,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+                subtitle: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      _presenceLabel(c.isOnline, c.lastSeenAt),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: c.isOnline ? Colors.green.shade700 : AppColors.fgSoft,
+                          ),
+                    ),
+                    Text(
+                      preview,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
                 ),
                 trailing: c.unreadCount > 0
                     ? Container(
@@ -184,6 +209,13 @@ class _GroupsTabState extends ConsumerState<_GroupsTab> {
     super.initState();
     final ws = ref.read(wsClientProvider);
     _wsSub = ws.events.listen((event) {
+      if (event is WsReconnectedEvent) {
+        // Clear all cached previews so they refetch with fresh data
+        setState(() {
+          _previewFutures.clear();
+        });
+        return;
+      }
       if (event is GroupMessageEvent) {
         final groupId = event.data['groupId']?.toString();
         if (groupId == null) return;
@@ -424,56 +456,61 @@ class _UserSearchSheetState extends ConsumerState<_UserSearchSheet> {
 
   @override
   Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+    final topPadding = MediaQuery.of(context).viewPadding.top;
     return Padding(
-      padding: EdgeInsets.only(
-        bottom: MediaQuery.of(context).viewInsets.bottom,
-      ),
-      child: SizedBox(
-        height: MediaQuery.of(context).size.height * 0.7,
-        child: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(
-                  AppSpacing.lg, AppSpacing.lg, AppSpacing.lg, AppSpacing.sm),
-              child: TextField(
-                controller: _ctrl,
-                autofocus: true,
-                onChanged: _search,
-                decoration: const InputDecoration(
-                  hintText: 'Поиск по никнейму среди пользователей ваших групп',
-                  prefixIcon: Icon(SolarIconsOutline.magnifier),
-                  filled: true,
+      padding: EdgeInsets.only(bottom: bottomInset),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.of(context).size.height * 0.85 - topPadding,
+        ),
+        child: SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(
+                    AppSpacing.lg, AppSpacing.lg, AppSpacing.lg, AppSpacing.sm),
+                child: TextField(
+                  controller: _ctrl,
+                  autofocus: true,
+                  onChanged: _search,
+                  decoration: const InputDecoration(
+                    hintText: 'Поиск по никнейму среди пользователей ваших групп',
+                    prefixIcon: Icon(SolarIconsOutline.magnifier),
+                    filled: true,
+                  ),
                 ),
               ),
-            ),
-            if (_loading) const LinearProgressIndicator(minHeight: 1),
-            Expanded(
-              child: ListView.builder(
-                itemCount: _results.length,
-                itemBuilder: (context, i) {
-                  final user = _results[i];
-                  final username = user['username'] ?? '?';
-                  final displayName = _displayName(user);
-                  final avatarUrl = _avatarUrl(user);
-                  return ListTile(
-                    leading: CircleAvatar(
-                      backgroundImage:
-                          avatarUrl != null ? NetworkImage(avatarUrl) : null,
-                      child: avatarUrl == null
-                          ? Text(displayName.isNotEmpty
-                              ? displayName[0].toUpperCase()
-                              : '?')
-                          : null,
-                    ),
-                    title: Text(displayName),
-                    subtitle:
-                        displayName != username ? Text('@$username') : null,
-                    onTap: () => Navigator.of(context).pop(user),
-                  );
-                },
+              if (_loading) const LinearProgressIndicator(minHeight: 1),
+              Expanded(
+                child: ListView.builder(
+                  itemCount: _results.length,
+                  itemBuilder: (context, i) {
+                    final user = _results[i];
+                    final username = user['username'] ?? '?';
+                    final displayName = _displayName(user);
+                    final avatarUrl = _avatarUrl(user);
+                    return ListTile(
+                      leading: CircleAvatar(
+                        backgroundImage:
+                            avatarUrl != null ? NetworkImage(avatarUrl) : null,
+                        child: avatarUrl == null
+                            ? Text(displayName.isNotEmpty
+                                ? displayName[0].toUpperCase()
+                                : '?')
+                            : null,
+                      ),
+                      title: Text(displayName),
+                      subtitle:
+                          displayName != username ? Text('@$username') : null,
+                      onTap: () => Navigator.of(context).pop(user),
+                    );
+                  },
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -498,4 +535,36 @@ String? _groupAvatarUrl(String? raw) {
   if (value == null || value.isEmpty) return null;
   if (value.startsWith('http://') || value.startsWith('https://')) return value;
   return '${AppConfig.apiOrigin}$value';
+}
+
+String _presenceLabel(bool isOnline, DateTime? lastSeenAt) {
+  if (isOnline) return 'В сети';
+  if (lastSeenAt == null) return 'Не в сети';
+  final diff = DateTime.now().difference(lastSeenAt.toLocal());
+  if (diff.inMinutes < 1) return 'Был(а) только что';
+  if (diff.inMinutes < 60) return 'Был(а) ${diff.inMinutes} мин назад';
+  if (diff.inHours < 24) return 'Был(а) ${diff.inHours} ч назад';
+  return 'Был(а) ${DateFormat('dd.MM.yyyy HH:mm').format(lastSeenAt.toLocal())}';
+}
+
+class _OnlineDot extends StatelessWidget {
+  final bool isOnline;
+
+  const _OnlineDot({required this.isOnline});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 10,
+      height: 10,
+      decoration: BoxDecoration(
+        color: isOnline ? Colors.green.shade600 : Theme.of(context).colorScheme.outline,
+        shape: BoxShape.circle,
+        border: Border.all(
+          color: Theme.of(context).colorScheme.surface,
+          width: 1.5,
+        ),
+      ),
+    );
+  }
 }

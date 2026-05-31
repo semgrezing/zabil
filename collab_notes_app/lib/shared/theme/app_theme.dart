@@ -223,6 +223,7 @@ class AppTheme {
       snackBarTheme: SnackBarThemeData(
         backgroundColor: isDark ? const Color(0xFF2A2A2A) : const Color(0xFF1A1A1A),
         contentTextStyle: AppTypography.bodyMedium.copyWith(color: Colors.white),
+        actionTextColor: Colors.white,
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppRadii.sm),

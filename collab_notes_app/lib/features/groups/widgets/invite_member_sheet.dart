@@ -60,56 +60,58 @@ class _InviteMemberSheetState extends ConsumerState<InviteMemberSheet> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final bottomInset = MediaQuery.of(context).viewInsets.bottom;
-    return Padding(
-      padding: EdgeInsets.only(
-        left: 16,
-        right: 16,
-        top: 8,
-        bottom: 16 + bottomInset,
-      ),
-      child: Form(
-        key: _formKey,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Пригласить в «${widget.groupTitle}»', style: theme.textTheme.titleLarge),
-            const SizedBox(height: 16),
-            TextFormField(
-              controller: _usernameCtrl,
-              autofocus: true,
-              textInputAction: TextInputAction.done,
-              onFieldSubmitted: (_) => _submit(),
-              decoration: const InputDecoration(
-                labelText: 'Никнейм пользователя',
-                hintText: 'например: alex',
+    return SafeArea(
+      child: Padding(
+        padding: EdgeInsets.only(
+          left: 16,
+          right: 16,
+          top: 8,
+          bottom: 16 + bottomInset,
+        ),
+        child: Form(
+          key: _formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Пригласить в «${widget.groupTitle}»', style: theme.textTheme.titleLarge),
+              const SizedBox(height: 16),
+              TextFormField(
+                controller: _usernameCtrl,
+                autofocus: true,
+                textInputAction: TextInputAction.done,
+                onFieldSubmitted: (_) => _submit(),
+                decoration: const InputDecoration(
+                  labelText: 'Никнейм пользователя',
+                  hintText: 'например: alex',
+                ),
+                validator: (v) {
+                  final value = (v ?? '').trim();
+                  if (value.isEmpty) return 'Введите никнейм';
+                  if (value.length < 3) return 'Минимум 3 символа';
+                  return null;
+                },
               ),
-              validator: (v) {
-                final value = (v ?? '').trim();
-                if (value.isEmpty) return 'Введите никнейм';
-                if (value.length < 3) return 'Минимум 3 символа';
-                return null;
-              },
-            ),
-            if (_error != null) ...[
+              if (_error != null) ...[
+                const SizedBox(height: 8),
+                Text(_error!, style: TextStyle(color: theme.colorScheme.error)),
+              ],
               const SizedBox(height: 8),
-              Text(_error!, style: TextStyle(color: theme.colorScheme.error)),
-            ],
-            const SizedBox(height: 8),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton(
-                onPressed: _submitting ? null : _submit,
-                child: _submitting
-                    ? const SizedBox(
-                        height: 18,
-                        width: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Text('Отправить приглашение'),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton(
+                  onPressed: _submitting ? null : _submit,
+                  child: _submitting
+                      ? const SizedBox(
+                          height: 18,
+                          width: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Text('Отправить приглашение'),
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

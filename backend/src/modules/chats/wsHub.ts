@@ -38,6 +38,26 @@ export function isOnline(userId: string): boolean {
   return !!set && set.size > 0
 }
 
+/**
+ * Broadcast user_online_status to all online users who have an active connection
+ * (they would care about online status of any user). Sends to all connections
+ * except the user themselves.
+ */
+export function broadcastOnlineStatus(userId: string, isOnline: boolean, lastSeenAt: Date | null) {
+  const payload = JSON.stringify({
+    type: 'user_online_status',
+    userId,
+    isOnline,
+    lastSeenAt: lastSeenAt?.toISOString() ?? null,
+  })
+  for (const [connUserId, set] of connections) {
+    if (connUserId === userId) continue
+    set.forEach((ws) => {
+      try { ws.send(payload) } catch (_) {}
+    })
+  }
+}
+
 export function sendToUser(userId: string, message: object) {
   const set = connections.get(userId)
   if (!set) return

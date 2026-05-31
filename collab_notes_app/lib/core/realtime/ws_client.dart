@@ -31,6 +31,12 @@ class ChatTypingEvent extends WsEvent {
   const ChatTypingEvent({required this.kind, required this.data});
 }
 
+class ChatStoppedTypingEvent extends WsEvent {
+  final String kind; // 'group' | 'personal'
+  final Map<String, dynamic> data;
+  const ChatStoppedTypingEvent({required this.kind, required this.data});
+}
+
 class PersonalReadReceiptEvent extends WsEvent {
   final String readerId;
   final String peerUserId;
@@ -40,6 +46,20 @@ class PersonalReadReceiptEvent extends WsEvent {
   const PersonalReadReceiptEvent({
     required this.readerId,
     required this.peerUserId,
+    required this.messageIds,
+    required this.readAt,
+  });
+}
+
+class GroupReadReceiptEvent extends WsEvent {
+  final String groupId;
+  final String readerId;
+  final List<String> messageIds;
+  final DateTime readAt;
+
+  const GroupReadReceiptEvent({
+    required this.groupId,
+    required this.readerId,
     required this.messageIds,
     required this.readAt,
   });
@@ -61,6 +81,13 @@ class WsHelloEvent extends WsEvent {
   const WsHelloEvent(this.userId);
 }
 
+/// Emitted when the WS client reconnects after a connection drop.
+/// Providers should refetch their data when they receive this event,
+/// because messages may have been missed during the disconnect.
+class WsReconnectedEvent extends WsEvent {
+  const WsReconnectedEvent();
+}
+
 class NotePresenceEvent extends WsEvent {
   final String noteId;
   final String userId;
@@ -80,6 +107,17 @@ class NoteTypingEvent extends WsEvent {
   const NoteTypingEvent({required this.noteId, required this.userId});
 }
 
+class UserOnlineStatusEvent extends WsEvent {
+  final String userId;
+  final bool isOnline;
+  final DateTime? lastSeenAt;
+  const UserOnlineStatusEvent({
+    required this.userId,
+    required this.isOnline,
+    this.lastSeenAt,
+  });
+}
+
 /// WebSocket-клиент с auto-reconnect.
 ///
 /// Подключается на auth (есть валидный access token), переподключается при
@@ -92,8 +130,11 @@ class WsClient {
       StreamController<WsEvent>.broadcast();
   bool _disposed = false;
   bool _connected = false;
+  bool _hasConnectedBefore = false;
   int _retryDelaySec = 3;
   Timer? _retryTimer;
+  Timer? _pingTimer;
+  bool _pongReceived = true;
 
   WsClient();
 
@@ -110,6 +151,12 @@ class WsClient {
       return;
     }
 
+    // Clean up any previous dead channel/subscription before reconnecting
+    await _channelSub?.cancel();
+    _channelSub = null;
+    try { await _channel?.sink.close(); } catch (_) {}
+    _channel = null;
+
     // ws/wss URL = origin без /api/v1 + /api/v1/ws
     final origin = AppConfig.apiOrigin;
     final wsScheme = origin.startsWith('https') ? 'wss' : 'ws';
@@ -125,8 +172,14 @@ class WsClient {
         cancelOnError: false,
       );
       _connected = true;
+      final isReconnect = _hasConnectedBefore;
+      _hasConnectedBefore = true;
       _retryDelaySec = 3; // reset backoff
-      debugPrint('[ws] connected $url');
+      _startPing();
+      debugPrint('[ws] connected $url (reconnect=$isReconnect)');
+      if (isReconnect) {
+        _eventsController.add(const WsReconnectedEvent());
+      }
     } catch (e) {
       debugPrint('[ws] connect failed: $e');
       _scheduleReconnect();
@@ -137,7 +190,10 @@ class WsClient {
     try {
       final json = jsonDecode(raw as String) as Map<String, dynamic>;
       final type = json['type'];
-      if (type == 'hello') {
+      if (type == 'pong') {
+        _pongReceived = true;
+        return;
+      } else if (type == 'hello') {
         _eventsController.add(WsHelloEvent(json['userId'] as String));
       } else if (type == 'message') {
         final kind = json['kind'];
@@ -171,6 +227,11 @@ class WsClient {
           kind: json['kind'] as String? ?? '',
           data: (json['data'] as Map?)?.cast<String, dynamic>() ?? const {},
         ));
+      } else if (type == 'chat_typing_stop') {
+        _eventsController.add(ChatStoppedTypingEvent(
+          kind: json['kind'] as String? ?? '',
+          data: (json['data'] as Map?)?.cast<String, dynamic>() ?? const {},
+        ));
       } else if (type == 'read_receipt' && json['kind'] == 'personal') {
         final data = (json['data'] as Map?)?.cast<String, dynamic>() ?? const {};
         _eventsController.add(PersonalReadReceiptEvent(
@@ -182,6 +243,25 @@ class WsClient {
           readAt: DateTime.tryParse(data['readAt']?.toString() ?? '') ??
               DateTime.now(),
         ));
+      } else if (type == 'read_receipt' && json['kind'] == 'group') {
+        final data = (json['data'] as Map?)?.cast<String, dynamic>() ?? const {};
+        _eventsController.add(GroupReadReceiptEvent(
+          groupId: data['groupId']?.toString() ?? '',
+          readerId: data['readerId']?.toString() ?? '',
+          messageIds: ((data['messageIds'] as List?) ?? const [])
+              .map((e) => e.toString())
+              .toList(),
+          readAt: DateTime.tryParse(data['readAt']?.toString() ?? '') ??
+              DateTime.now(),
+        ));
+      } else if (type == 'user_online_status') {
+        _eventsController.add(UserOnlineStatusEvent(
+          userId: json['userId']?.toString() ?? '',
+          isOnline: json['isOnline'] as bool? ?? false,
+          lastSeenAt: json['lastSeenAt'] != null
+              ? DateTime.tryParse(json['lastSeenAt'].toString())
+              : null,
+        ));
       }
     } catch (e) {
       debugPrint('[ws] parse error: $e');
@@ -191,13 +271,42 @@ class WsClient {
   void _onDone() {
     debugPrint('[ws] closed');
     _connected = false;
+    _stopPing();
     _scheduleReconnect();
   }
 
   void _onError(Object err) {
     debugPrint('[ws] error: $err');
     _connected = false;
+    _stopPing();
     _scheduleReconnect();
+  }
+
+  void _startPing() {
+    _stopPing();
+    _pongReceived = true;
+    _pingTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (!_connected) return;
+      if (!_pongReceived) {
+        // Server didn't respond to last ping — connection is dead
+        debugPrint('[ws] ping timeout, forcing reconnect');
+        _connected = false;
+        _stopPing();
+        _channelSub?.cancel();
+        _channelSub = null;
+        try { _channel?.sink.close(); } catch (_) {}
+        _channel = null;
+        _scheduleReconnect();
+        return;
+      }
+      _pongReceived = false;
+      _send({'type': 'ping'});
+    });
+  }
+
+  void _stopPing() {
+    _pingTimer?.cancel();
+    _pingTimer = null;
   }
 
   void _scheduleReconnect() {
@@ -227,6 +336,14 @@ class WsClient {
     _send({'type': 'chat_typing', 'kind': 'personal', 'userId': userId});
   }
 
+  void sendChatTypingStopGroup(String groupId) {
+    _send({'type': 'chat_typing_stop', 'kind': 'group', 'groupId': groupId});
+  }
+
+  void sendChatTypingStopPersonal(String userId) {
+    _send({'type': 'chat_typing_stop', 'kind': 'personal', 'userId': userId});
+  }
+
   void _send(Map<String, dynamic> data) {
     if (!_connected || _channel == null) return;
     try {
@@ -238,6 +355,7 @@ class WsClient {
 
   Future<void> disconnect() async {
     _retryTimer?.cancel();
+    _stopPing();
     await _channelSub?.cancel();
     _channelSub = null;
     try {

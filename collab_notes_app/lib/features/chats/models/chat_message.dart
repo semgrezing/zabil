@@ -13,6 +13,10 @@ class GroupChatMessage {
   final int? imageSize;
   final bool? imageCompressed;
   final DateTime createdAt;
+  /// Number of group members (excluding sender) who have read this message.
+  final int readCount;
+  /// Whether the current viewer has read this message.
+  final bool isReadByMe;
 
   const GroupChatMessage({
     required this.id,
@@ -28,6 +32,8 @@ class GroupChatMessage {
     required this.imageSize,
     required this.imageCompressed,
     required this.createdAt,
+    this.readCount = 0,
+    this.isReadByMe = false,
   });
 
   factory GroupChatMessage.fromJson(Map<String, dynamic> json) => GroupChatMessage(
@@ -40,13 +46,38 @@ class GroupChatMessage {
         noteTitle: (json['note'] as Map<String, dynamic>?)?['title'] as String?,
         noteColorLabel: (json['note'] as Map<String, dynamic>?)?['colorLabel'] as String?,
         body: json['body'] as String,
-      imageUrl: json['imageUrl'] as String?,
-      imageMimeType: json['imageMimeType'] as String?,
-      imageSize: (json['imageSize'] as num?)?.toInt(),
-      imageCompressed: json['imageCompressed'] as bool?,
-      createdAt: DateTime.tryParse(json['createdAt']?.toString() ?? '') ??
-        DateTime.now(),
+        imageUrl: json['imageUrl'] as String?,
+        imageMimeType: json['imageMimeType'] as String?,
+        imageSize: (json['imageSize'] as num?)?.toInt(),
+        imageCompressed: json['imageCompressed'] as bool?,
+        createdAt: DateTime.tryParse(json['createdAt']?.toString() ?? '') ??
+            DateTime.now(),
+        readCount: (json['readCount'] as num?)?.toInt() ?? 0,
+        isReadByMe: json['isReadByMe'] as bool? ?? false,
       );
+
+  GroupChatMessage copyWith({
+    int? readCount,
+    bool? isReadByMe,
+  }) {
+    return GroupChatMessage(
+      id: id,
+      groupId: groupId,
+      senderId: senderId,
+      sender: sender,
+      noteId: noteId,
+      noteTitle: noteTitle,
+      noteColorLabel: noteColorLabel,
+      body: body,
+      imageUrl: imageUrl,
+      imageMimeType: imageMimeType,
+      imageSize: imageSize,
+      imageCompressed: imageCompressed,
+      createdAt: createdAt,
+      readCount: readCount ?? this.readCount,
+      isReadByMe: isReadByMe ?? this.isReadByMe,
+    );
+  }
 }
 
 /// Личное 1:1 сообщение.
@@ -140,4 +171,27 @@ class PersonalChatPreview {
               ),
         unreadCount: (json['unreadCount'] as num?)?.toInt() ?? 0,
       );
+
+  bool get isOnline => user['isOnline'] == 'true';
+
+  DateTime? get lastSeenAt {
+    final raw = user['lastSeenAt'];
+    if (raw == null || raw.isEmpty) return null;
+    return DateTime.tryParse(raw);
+  }
+
+  PersonalChatPreview copyWithPresence({
+    required bool isOnline,
+    DateTime? lastSeenAt,
+  }) {
+    return PersonalChatPreview(
+      user: {
+        ...user,
+        'isOnline': isOnline.toString(),
+        'lastSeenAt': lastSeenAt?.toIso8601String() ?? '',
+      },
+      lastMessage: lastMessage,
+      unreadCount: unreadCount,
+    );
+  }
 }

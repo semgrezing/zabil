@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:ui';
 import 'dart:async';
 
@@ -79,6 +80,31 @@ class _MainShellState extends ConsumerState<MainShell> {
         ref.invalidate(notesProvider);
         messenger.showSnackBar(
           SnackBar(content: Text(event.body.isNotEmpty ? event.body : 'Обновлен доступ к группе')),
+        );
+        break;
+      case 'app_release':
+        final platform = event.data['platform']?.toString();
+        final downloadUrl = event.data['downloadUrl']?.toString();
+        final currentPlatform = Platform.isAndroid
+            ? 'android'
+            : Platform.isWindows
+                ? 'windows'
+                : Platform.operatingSystem;
+        if (platform != null && platform != currentPlatform) break;
+        ref.invalidate(updateCheckProvider);
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text(event.body.isNotEmpty
+                ? event.body
+                : 'Доступна версия ${event.data['version'] ?? ''}'),
+            duration: const Duration(seconds: 15),
+            action: downloadUrl == null || downloadUrl.isEmpty
+                ? null
+                : SnackBarAction(
+                    label: 'Скачать',
+                    onPressed: () => launchUrl(Uri.parse(downloadUrl)),
+                  ),
+          ),
         );
         break;
       default:
@@ -222,7 +248,7 @@ class _NoteFab extends ConsumerWidget {
     if (groupsAsync.isLoading || personalAsync.isLoading) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Загрузка контекстов...'),
+          content: Text('Загрузка групп...'),
           duration: Duration(seconds: 1),
         ),
       );
@@ -236,7 +262,7 @@ class _NoteFab extends ConsumerWidget {
       ref.invalidate(groupsProvider);
       ref.invalidate(personalContextProvider);
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Контексты недоступны. Обновляю...')),
+        const SnackBar(content: Text('Группы недоступны. Обновляю...')),
       );
       return;
     }

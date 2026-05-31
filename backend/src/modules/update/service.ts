@@ -1,6 +1,7 @@
 import { FastifyInstance } from 'fastify'
 import { errors } from '../../utils/errors.js'
 import { env } from '../../config/env.js'
+import { notifyAppRelease } from '../notifications/service.js'
 
 type Platform = 'android' | 'windows'
 
@@ -101,7 +102,7 @@ export async function createRelease(
     throw errors.badRequest('Версия должна быть в формате x.y.z')
   }
   // Upsert чтобы можно было пересоздать релиз той же версии (при rebuild)
-  return app.prisma.appRelease.upsert({
+  const release = await app.prisma.appRelease.upsert({
     where: { platform_version: { platform: dto.platform, version: dto.version } },
     create: {
       version: dto.version,
@@ -122,4 +123,18 @@ export async function createRelease(
       notes: dto.notes,
     },
   })
+
+  const downloadUrl = release.downloadUrl.startsWith('http')
+    ? release.downloadUrl
+    : `${env.PUBLIC_ORIGIN}${release.downloadUrl}`
+
+  notifyAppRelease(app, {
+    version: release.version,
+    platform: release.platform,
+    downloadUrl,
+    notes: release.notes,
+    mandatory: release.mandatory,
+  }).catch((e: unknown) => console.error('[notify] notifyAppRelease:', e))
+
+  return release
 }

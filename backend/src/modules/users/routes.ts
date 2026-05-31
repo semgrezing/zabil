@@ -9,6 +9,7 @@ import {
   getAvatarHistory,
   deleteAvatar,
   deleteAvatarHistoryItem,
+  computeIsOnline,
 } from './service.js'
 import { AppError } from '../../utils/errors.js'
 import { env } from '../../config/env.js'
@@ -123,6 +124,23 @@ export async function usersRoutes(app: FastifyInstance) {
     try {
       const profile = await getUserPublicProfile(app, request.user.userId, id)
       return reply.send(profile)
+    } catch (err) {
+      if (err instanceof AppError) return reply.status(err.statusCode).send({ error: err.message, code: err.code })
+      throw err
+    }
+  })
+
+  // GET /users/:id/online-status — lightweight poll for current online status
+  app.get('/:id/online-status', { preHandler: [authenticate] }, async (request, reply) => {
+    const { id } = request.params as { id: string }
+    try {
+      const user = await app.prisma.user.findUnique({
+        where: { id },
+        select: { id: true, lastSeenAt: true },
+      })
+      if (!user) return reply.status(404).send({ error: 'Пользователь не найден', code: 'NOT_FOUND' })
+      const isOnline = computeIsOnline(user.lastSeenAt)
+      return reply.send({ userId: user.id, isOnline, lastSeenAt: user.lastSeenAt?.toISOString() ?? null })
     } catch (err) {
       if (err instanceof AppError) return reply.status(err.statusCode).send({ error: err.message, code: err.code })
       throw err

@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:dio/dio.dart';
 import '../../../core/api/api_client.dart';
 import '../../../core/config/api_endpoints.dart';
@@ -110,6 +112,31 @@ class ChatsService {
     return Map<String, dynamic>.from(response.data as Map);
   }
 
+  /// Upload an image from raw bytes (e.g. clipboard paste on desktop).
+  Future<Map<String, dynamic>> uploadChatImageFromBytes(
+    Uint8List bytes, {
+    required bool compressed,
+    String filename = 'pasted_image.png',
+    String contentType = 'image/png',
+  }) async {
+    final formData = FormData.fromMap({
+      'file': MultipartFile.fromBytes(
+        bytes,
+        filename: filename,
+        contentType: DioMediaType.parse(contentType),
+      ),
+    });
+    final response = await _dio.post(
+      '${ApiEndpoints.uploadChatImage}?compressed=${compressed ? 'true' : 'false'}',
+      data: formData,
+    );
+    return Map<String, dynamic>.from(response.data as Map);
+  }
+
+  Future<void> markGroupRead(String groupId) async {
+    await _dio.post(ApiEndpoints.groupMarkRead(groupId));
+  }
+
   Future<void> markPersonalRead(String userId) async {
     await _dio.post(ApiEndpoints.personalMarkRead(userId));
   }
@@ -148,5 +175,11 @@ class ChatsService {
   Future<ChatUserProfile> getUserProfile(String userId) async {
     final response = await _dio.get(ApiEndpoints.userPublicProfile(userId));
     return ChatUserProfile.fromJson(response.data as Map<String, dynamic>);
+  }
+
+  /// Lightweight poll — returns { isOnline, lastSeenAt }.
+  Future<Map<String, dynamic>> getUserOnlineStatus(String userId) async {
+    final response = await _dio.get(ApiEndpoints.userOnlineStatus(userId));
+    return Map<String, dynamic>.from(response.data as Map);
   }
 }

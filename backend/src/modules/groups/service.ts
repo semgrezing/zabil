@@ -8,6 +8,84 @@ import { errors } from '../../utils/errors.js'
 import { env } from '../../config/env.js'
 import { notifyGroupDeleted, notifyGroupMemberRemoved } from '../notifications/service.js'
 
+const groupMemberUserSelect = {
+  id: true,
+  username: true,
+  displayName: true,
+  avatarUrl: true,
+  lastSeenAt: true,
+} as const
+
+const groupLastMessageInclude = {
+  orderBy: { createdAt: 'desc' },
+  take: 1,
+  include: {
+    sender: {
+      select: groupMemberUserSelect,
+    },
+  },
+} as const
+
+const groupInclude = {
+  members: {
+    include: {
+      user: { select: groupMemberUserSelect },
+    },
+  },
+  chatMessages: groupLastMessageInclude,
+} as const
+
+type GroupWithPreview = Awaited<ReturnType<typeof buildGroupPayload>>
+
+async function buildGroupPayload(group: {
+  id: string
+  title: string
+  avatarUrl: string | null
+  isPersonal: boolean
+  members: Array<{
+    id: string
+    role: string
+    user: {
+      id: string
+      username: string
+      displayName: string | null
+      avatarUrl: string | null
+      lastSeenAt: Date | null
+    }
+  }>
+  chatMessages: Array<{
+    id: string
+    body: string
+    imageUrl: string | null
+    createdAt: Date
+    sender: {
+      id: string
+      username: string
+      displayName: string | null
+      avatarUrl: string | null
+      lastSeenAt: Date | null
+    }
+  }>
+}) {
+  const [lastMessage] = group.chatMessages
+  return {
+    id: group.id,
+    title: group.title,
+    avatarUrl: group.avatarUrl,
+    isPersonal: group.isPersonal,
+    members: group.members,
+    lastMessage: lastMessage
+        ? {
+            id: lastMessage.id,
+            body: lastMessage.body,
+            imageUrl: lastMessage.imageUrl,
+            createdAt: lastMessage.createdAt,
+            sender: lastMessage.sender,
+          }
+        : null,
+  }
+}
+
 const ALLOWED_MIME_TYPES = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/webp'])
 const ALLOWED_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp'])
 const MAGIC_BYTES: Record<string, number[]> = {
@@ -79,16 +157,10 @@ export async function createGroup(app: FastifyInstance, userId: string, dto: Cre
         },
       },
     },
-    include: {
-      members: {
-        include: {
-          user: { select: { id: true, username: true, displayName: true, avatarUrl: true } },
-        },
-      },
-    },
+    include: groupInclude,
   })
 
-  return group
+  return buildGroupPayload(group)
 }
 
 export async function getUserGroups(app: FastifyInstance, userId: string) {
@@ -101,19 +173,13 @@ export async function getUserGroups(app: FastifyInstance, userId: string) {
     },
     include: {
       group: {
-        include: {
-          members: {
-            include: {
-              user: { select: { id: true, username: true, displayName: true, avatarUrl: true } },
-            },
-          },
-        },
+        include: groupInclude,
       },
     },
     orderBy: { joinedAt: 'desc' },
   })
 
-  return members.map((m) => m.group)
+  return Promise.all(members.map((m) => buildGroupPayload(m.group)))
 }
 
 export async function getPersonalContext(app: FastifyInstance, userId: string) {
@@ -130,19 +196,13 @@ export async function getUserGroupsWithPersonal(app: FastifyInstance, userId: st
     where: { userId },
     include: {
       group: {
-        include: {
-          members: {
-            include: {
-              user: { select: { id: true, username: true, displayName: true, avatarUrl: true } },
-            },
-          },
-        },
+        include: groupInclude,
       },
     },
     orderBy: { joinedAt: 'desc' },
   })
 
-  return members.map((m) => m.group)
+  return Promise.all(members.map((m) => buildGroupPayload(m.group)))
 }
 
 export async function getGroupById(app: FastifyInstance, groupId: string, userId: string) {
@@ -153,17 +213,11 @@ export async function getGroupById(app: FastifyInstance, groupId: string, userId
 
   const group = await app.prisma.group.findUnique({
     where: { id: groupId },
-    include: {
-      members: {
-        include: {
-          user: { select: { id: true, username: true, displayName: true, avatarUrl: true } },
-        },
-      },
-    },
+    include: groupInclude,
   })
   if (!group) throw errors.notFound('Группа')
 
-  return group
+  return buildGroupPayload(group)
 }
 
 export async function updateGroup(
@@ -184,14 +238,8 @@ export async function updateGroup(
   return app.prisma.group.update({
     where: { id: groupId },
     data: { title: dto.title.trim() },
-    include: {
-      members: {
-        include: {
-          user: { select: { id: true, username: true, displayName: true, avatarUrl: true } },
-        },
-      },
-    },
-  })
+    include: groupInclude,
+  }).then(buildGroupPayload)
 }
 
 export async function removeGroupMember(
@@ -254,7 +302,7 @@ export async function uploadGroupAvatar(
     select: { id: true, isPersonal: true, avatarUrl: true },
   })
   if (!group) throw errors.notFound('Группа')
-  if (group.isPersonal) throw errors.badRequest('Для личного контекста аватарка недоступна')
+  if (group.isPersonal) throw errors.badRequest('Для личной группы аватарка недоступна')
 
   await requireManageRole(app, groupId, userId)
 
@@ -310,13 +358,10 @@ export async function uploadGroupAvatar(
 
   return app.prisma.group.findUnique({
     where: { id: groupId },
-    include: {
-      members: {
-        include: {
-          user: { select: { id: true, username: true, displayName: true, avatarUrl: true } },
-        },
-      },
-    },
+    include: groupInclude,
+  }).then((updated) => {
+    if (!updated) throw errors.notFound('Группа')
+    return buildGroupPayload(updated)
   })
 }
 
@@ -338,7 +383,7 @@ export async function deleteGroupAvatar(app: FastifyInstance, groupId: string, u
     select: { avatarUrl: true, isPersonal: true },
   })
   if (!group) throw errors.notFound('Группа')
-  if (group.isPersonal) throw errors.badRequest('Для личного контекста аватарка недоступна')
+  if (group.isPersonal) throw errors.badRequest('Для личной группы аватарка недоступна')
 
   await requireManageRole(app, groupId, userId)
 

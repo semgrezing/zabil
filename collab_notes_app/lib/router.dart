@@ -10,6 +10,7 @@ import '../features/notes/screens/notes_list_screen.dart';
 import '../features/notes/screens/note_editor_screen.dart';
 import '../features/chats/screens/chats_list_screen.dart';
 import '../features/chats/screens/chat_screen.dart';
+import '../features/chats/screens/chat_user_profile_screen.dart';
 import '../features/groups/screens/group_detail_screen.dart';
 import '../features/groups/screens/groups_list_screen.dart';
 import '../features/invitations/screens/invitations_screen.dart';
@@ -94,6 +95,14 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/activity',
         builder: (_, __) => const ActivityFeedScreen(),
+      ),
+
+      // User profile (from personal chat header)
+      GoRoute(
+        path: '/users/:id',
+        builder: (_, state) => ChatUserProfileScreen(
+          userId: state.pathParameters['id']!,
+        ),
       ),
 
       // Group detail (modal/full page)

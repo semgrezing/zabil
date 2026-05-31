@@ -379,67 +379,105 @@ class _NotesListScreenState extends ConsumerState<NotesListScreen> {
                   );
                 }
 
-                if (_gridView) {
-                  return RefreshIndicator(
-                    color: AppColors.white,
-                    backgroundColor: AppColors.bg3,
-                    displacement: 60,
-                    strokeWidth: 2.5,
-                    onRefresh: () =>
-                        ref.read(notesProvider.notifier).refresh(),
-                    child: LayoutBuilder(
-                      builder: (context, constraints) {
-                        final crossAxisCount = constraints.maxWidth >= 1200
-                            ? 4
-                            : constraints.maxWidth >= 800
-                                ? 3
-                                : 2;
-                        return MasonryGridView.count(
-                          padding:
-                              const EdgeInsets.fromLTRB(12, 4, 12, 80),
-                          crossAxisCount: crossAxisCount,
-                          mainAxisSpacing: 10,
-                          crossAxisSpacing: 10,
-                          itemCount: notes.length,
-                          itemBuilder: (context, index) {
-                            final note = notes[index];
-                            return NoteCard(
-                              note: note,
-                              compactMode: true,
-                              highlightText: textHighlights.contains(note.id),
-                              highlightChecklist: checklistHighlights.contains(note.id),
-                              onTap: () {
-                                ref.read(notesProvider.notifier).markNoteAsViewed(note.id);
-                                context.go('/notes/${note.id}');
+                final viewport = _gridView
+                    ? RefreshIndicator(
+                        key: const ValueKey('notes_grid_refresh'),
+                        color: AppColors.white,
+                        backgroundColor: AppColors.bg3,
+                        displacement: 60,
+                        strokeWidth: 2.5,
+                        onRefresh: () =>
+                            ref.read(notesProvider.notifier).refresh(),
+                        child: LayoutBuilder(
+                          builder: (context, constraints) {
+                            final crossAxisCount = constraints.maxWidth >= 1200
+                                ? 4
+                                : constraints.maxWidth >= 800
+                                    ? 3
+                                    : 2;
+                            return MasonryGridView.count(
+                              key: const PageStorageKey('notes_grid'),
+                              padding: const EdgeInsets.fromLTRB(12, 4, 12, 80),
+                              crossAxisCount: crossAxisCount,
+                              mainAxisSpacing: 10,
+                              crossAxisSpacing: 10,
+                              itemCount: notes.length,
+                              itemBuilder: (context, index) {
+                                final note = notes[index];
+                                return NoteCard(
+                                  key: ValueKey('grid_${note.id}'),
+                                  note: note,
+                                  compactMode: true,
+                                  highlightText: textHighlights.contains(note.id),
+                                  highlightChecklist: checklistHighlights.contains(note.id),
+                                  onTap: () {
+                                    ref.read(notesProvider.notifier).markNoteAsViewed(note.id);
+                                    context.go('/notes/${note.id}');
+                                  },
+                                  onArchive: () =>
+                                      _archiveNote(context, ref, note),
+                                  onDelete: () =>
+                                      _confirmDelete(context, ref, note),
+                                  onMove: () =>
+                                      _moveNote(context, ref, note),
+                                  onTogglePin: () =>
+                                      _togglePin(context, ref, note),
+                                  onColorChanged: (color) =>
+                                      _setNoteColor(context, ref, note, color),
+                                );
                               },
-                              onArchive: () =>
-                                  _archiveNote(context, ref, note),
-                              onDelete: () =>
-                                  _confirmDelete(context, ref, note),
-                              onMove: () =>
-                                  _moveNote(context, ref, note),
-                              onTogglePin: () =>
-                                  _togglePin(context, ref, note),
-                              onColorChanged: (color) =>
-                                  _setNoteColor(context, ref, note, color),
                             );
                           },
-                        );
-                      },
-                    ),
-                  );
-                }
+                        ),
+                      )
+                    : RefreshIndicator(
+                        key: const ValueKey('notes_list_refresh'),
+                        onRefresh: () =>
+                            ref.read(notesProvider.notifier).refresh(),
+                        child: ListView.separated(
+                          key: const PageStorageKey('notes_list'),
+                          padding: const EdgeInsets.fromLTRB(12, 4, 12, 80),
+                          itemCount: notes.length,
+                          separatorBuilder: (_, __) => const SizedBox(height: 10),
+                          itemBuilder: (context, index) => KeyedSubtree(
+                            key: ValueKey('list_${notes[index].id}'),
+                            child: contentBuilder(index),
+                          ),
+                        ),
+                      );
 
-                return RefreshIndicator(
-                  onRefresh: () =>
-                      ref.read(notesProvider.notifier).refresh(),
-                  child: ListView.separated(
-                    padding: const EdgeInsets.fromLTRB(12, 4, 12, 80),
-                    itemCount: notes.length,
-                    separatorBuilder: (_, __) =>
-                        const SizedBox(height: 10),
-                    itemBuilder: (context, index) =>
-                        contentBuilder(index),
+                return AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 420),
+                  switchInCurve: Curves.easeOutCubic,
+                  switchOutCurve: Curves.easeInCubic,
+                  layoutBuilder: (currentChild, previousChildren) => Stack(
+                    alignment: Alignment.topCenter,
+                    children: [
+                      ...previousChildren,
+                      if (currentChild != null) currentChild,
+                    ],
+                  ),
+                  transitionBuilder: (child, animation) {
+                    final fade = CurvedAnimation(
+                      parent: animation,
+                      curve: Curves.easeOutCubic,
+                    );
+                    final scale = Tween<double>(begin: 0.96, end: 1.0).animate(fade);
+                    final slide = Tween<Offset>(
+                      begin: const Offset(0, 0.025),
+                      end: Offset.zero,
+                    ).animate(fade);
+                    return FadeTransition(
+                      opacity: fade,
+                      child: SlideTransition(
+                        position: slide,
+                        child: ScaleTransition(scale: scale, child: child),
+                      ),
+                    );
+                  },
+                  child: KeyedSubtree(
+                    key: ValueKey(_gridView ? 'notes_grid_view' : 'notes_list_view'),
+                    child: viewport,
                   ),
                 );
               },
@@ -465,7 +503,7 @@ class _NotesListScreenState extends ConsumerState<NotesListScreen> {
           if (!context.mounted) return;
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('Нет доступных контекстов для восстановления'),
+              content: Text('Нет доступных групп для восстановления'),
             ),
           );
           return;
@@ -574,7 +612,7 @@ class _NotesListScreenState extends ConsumerState<NotesListScreen> {
     if (contexts.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-            content: Text('Нет доступных контекстов для переноса')),
+            content: Text('Нет доступных групп для переноса')),
       );
       return;
     }

@@ -14,6 +14,16 @@ const MAGIC_BYTES: Record<string, number[]> = {
   'image/webp': [0x52, 0x49, 0x46, 0x46],
 }
 
+const userProfileSelect = {
+  id: true,
+  username: true,
+  displayName: true,
+  avatarUrl: true,
+  notePushEnabled: true,
+  checklistPushEnabled: true,
+  releasePushEnabled: true,
+} as const
+
 function ensureDir(dir: string) {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true })
@@ -34,7 +44,7 @@ function resolveAvatarPath(avatarUrl: string) {
 export async function getMe(app: FastifyInstance, userId: string) {
   const user = await app.prisma.user.findUnique({
     where: { id: userId },
-    select: { id: true, username: true, displayName: true, avatarUrl: true },
+    select: userProfileSelect,
   })
   if (!user) throw errors.notFound('Пользователь')
   return user
@@ -43,14 +53,30 @@ export async function getMe(app: FastifyInstance, userId: string) {
 export async function updateProfile(
   app: FastifyInstance,
   userId: string,
-  dto: { displayName?: string | null },
+  dto: {
+    displayName?: string | null
+    notePushEnabled?: boolean
+    checklistPushEnabled?: boolean
+    releasePushEnabled?: boolean
+  },
 ) {
   const raw = dto.displayName?.trim()
   const displayName = raw && raw.length > 0 ? raw : null
   const user = await app.prisma.user.update({
     where: { id: userId },
-    data: { displayName },
-    select: { id: true, username: true, displayName: true, avatarUrl: true },
+    data: {
+      displayName,
+      ...(dto.notePushEnabled != null
+          ? { notePushEnabled: dto.notePushEnabled }
+          : {}),
+      ...(dto.checklistPushEnabled != null
+          ? { checklistPushEnabled: dto.checklistPushEnabled }
+          : {}),
+      ...(dto.releasePushEnabled != null
+          ? { releasePushEnabled: dto.releasePushEnabled }
+          : {}),
+    },
+    select: userProfileSelect,
   })
   return user
 }
@@ -125,7 +151,7 @@ export async function uploadAvatar(
 
   return app.prisma.user.findUnique({
     where: { id: userId },
-    select: { id: true, username: true, displayName: true, avatarUrl: true },
+    select: userProfileSelect,
   })
 }
 
@@ -184,6 +210,13 @@ export async function deleteAvatarHistoryItem(
   return { deleted: true }
 }
 
+const ONLINE_THRESHOLD_MS = 3 * 60 * 1000 // 3 minutes
+
+export function computeIsOnline(lastSeenAt: Date | null): boolean {
+  if (!lastSeenAt) return false
+  return Date.now() - lastSeenAt.getTime() < ONLINE_THRESHOLD_MS
+}
+
 export async function getUserPublicProfile(
   app: FastifyInstance,
   requesterId: string,
@@ -191,7 +224,7 @@ export async function getUserPublicProfile(
 ) {
   const user = await app.prisma.user.findUnique({
     where: { id: targetUserId },
-    select: { id: true, username: true, displayName: true, avatarUrl: true },
+    select: { id: true, username: true, displayName: true, avatarUrl: true, lastSeenAt: true },
   })
   if (!user) throw errors.notFound('Пользователь')
 
@@ -226,8 +259,16 @@ export async function getUserPublicProfile(
     take: 30,
   })
 
+  const isOnline = computeIsOnline(user.lastSeenAt)
   return {
-    user,
+    user: {
+      id: user.id,
+      username: user.username,
+      displayName: user.displayName,
+      avatarUrl: user.avatarUrl,
+      lastSeenAt: user.lastSeenAt?.toISOString() ?? null,
+      isOnline,
+    },
     avatarHistory,
     commonGroups: commonMemberships.map((m) => ({
       id: m.group.id,

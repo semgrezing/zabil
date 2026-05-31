@@ -68,6 +68,44 @@ class SettingsScreen extends ConsumerWidget {
               onTap: () => _openProfileEditor(context, ref, user),
             ),
             const Divider(),
+            const _SectionHeader(label: 'Уведомления'),
+            SwitchListTile.adaptive(
+              secondary: const Icon(SolarIconsOutline.notes),
+              title: const Text('Пуши по заметкам'),
+              subtitle: const Text(
+                'Новые и обновлённые заметки в группах',
+                style: TextStyle(color: AppColors.fgSoft),
+              ),
+              value: user.notePushEnabled,
+              onChanged: (value) => ref
+                  .read(authStateProvider.notifier)
+                  .updateNotificationPrefs(notePushEnabled: value),
+            ),
+            SwitchListTile.adaptive(
+              secondary: const Icon(SolarIconsOutline.checkCircle),
+              title: const Text('Пуши по чеклистам'),
+              subtitle: const Text(
+                'Только при полном завершении чеклиста',
+                style: TextStyle(color: AppColors.fgSoft),
+              ),
+              value: user.checklistPushEnabled,
+              onChanged: (value) => ref
+                  .read(authStateProvider.notifier)
+                  .updateNotificationPrefs(checklistPushEnabled: value),
+            ),
+            SwitchListTile.adaptive(
+              secondary: const Icon(SolarIconsOutline.download),
+              title: const Text('Пуши новых версий'),
+              subtitle: const Text(
+                'APK/EXE с прямой ссылкой на скачивание',
+                style: TextStyle(color: AppColors.fgSoft),
+              ),
+              value: user.releasePushEnabled,
+              onChanged: (value) => ref
+                  .read(authStateProvider.notifier)
+                  .updateNotificationPrefs(releasePushEnabled: value),
+            ),
+            const Divider(),
           ],
 
           // Invitations & User search
@@ -418,92 +456,94 @@ class _EditProfileSheetState extends ConsumerState<_EditProfileSheet> {
         ? NetworkImage(_serverAvatarUrl!)
             : null);
 
-    return Padding(
-      padding: EdgeInsets.only(
-        left: AppSpacing.lg,
-        right: AppSpacing.lg,
-        bottom: MediaQuery.of(context).viewInsets.bottom + AppSpacing.lg,
-        top: AppSpacing.lg,
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Center(
-            child: Stack(
-              alignment: Alignment.bottomRight,
-              children: [
-                GestureDetector(
-                  onTap: _openAvatarHistory,
-                  child: CircleAvatar(
-                    radius: 36,
-                    backgroundImage: avatarProvider,
-                    child: avatarProvider == null
-                        ? Text(
-                            widget.user.displayLabel.isNotEmpty
-                                ? widget.user.displayLabel[0].toUpperCase()
-                                : widget.user.username[0].toUpperCase(),
-                          )
-                        : null,
+    return SafeArea(
+      child: Padding(
+        padding: EdgeInsets.only(
+          left: AppSpacing.lg,
+          right: AppSpacing.lg,
+          bottom: MediaQuery.of(context).viewInsets.bottom + AppSpacing.lg,
+          top: AppSpacing.lg,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Stack(
+                alignment: Alignment.bottomRight,
+                children: [
+                  GestureDetector(
+                    onTap: _openAvatarHistory,
+                    child: CircleAvatar(
+                      radius: 36,
+                      backgroundImage: avatarProvider,
+                      child: avatarProvider == null
+                          ? Text(
+                              widget.user.displayLabel.isNotEmpty
+                                  ? widget.user.displayLabel[0].toUpperCase()
+                                  : widget.user.username[0].toUpperCase(),
+                            )
+                          : null,
+                    ),
                   ),
+                  IconButton(
+                    icon: const Icon(Icons.photo_camera),
+                    onPressed: _saving ? null : _pickAvatar,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                TextButton.icon(
+                  onPressed: _saving ? null : _openAvatarHistory,
+                  icon: const Icon(Icons.photo_library_outlined),
+                  label: const Text('История'),
                 ),
-                IconButton(
-                  icon: const Icon(Icons.photo_camera),
-                  onPressed: _saving ? null : _pickAvatar,
+                TextButton.icon(
+                  onPressed: _saving ? null : _deleteCurrentAvatar,
+                  icon: const Icon(Icons.delete_outline),
+                  label: const Text('Удалить'),
                 ),
               ],
             ),
-          ),
-          const SizedBox(height: AppSpacing.sm),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              TextButton.icon(
-                onPressed: _saving ? null : _openAvatarHistory,
-                icon: const Icon(Icons.photo_library_outlined),
-                label: const Text('История'),
+            const SizedBox(height: AppSpacing.lg),
+            TextField(
+              controller: _nameCtrl,
+              enabled: !_saving,
+              decoration: const InputDecoration(
+                labelText: 'Имя',
+                hintText: 'Как показывать вас другим',
               ),
-              TextButton.icon(
-                onPressed: _saving ? null : _deleteCurrentAvatar,
-                icon: const Icon(Icons.delete_outline),
-                label: const Text('Удалить'),
-              ),
-            ],
-          ),
-          const SizedBox(height: AppSpacing.lg),
-          TextField(
-            controller: _nameCtrl,
-            enabled: !_saving,
-            decoration: const InputDecoration(
-              labelText: 'Имя',
-              hintText: 'Как показывать вас другим',
             ),
-          ),
-          const SizedBox(height: AppSpacing.lg),
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: _saving ? null : () => Navigator.pop(context),
-                  child: const Text('Отмена'),
+            const SizedBox(height: AppSpacing.lg),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: _saving ? null : () => Navigator.pop(context),
+                    child: const Text('Отмена'),
+                  ),
                 ),
-              ),
-              const SizedBox(width: AppSpacing.md),
-              Expanded(
-                child: ElevatedButton(
-                  onPressed: _saving ? null : _save,
-                  child: _saving
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Text('Сохранить'),
+                const SizedBox(width: AppSpacing.md),
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: _saving ? null : _save,
+                    child: _saving
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Text('Сохранить'),
+                  ),
                 ),
-              ),
-            ],
-          ),
-        ],
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }

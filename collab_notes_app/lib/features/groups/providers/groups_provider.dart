@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/group_model.dart';
 import '../services/groups_service.dart';
 import '../../auth/providers/auth_provider.dart';
+import '../../../core/realtime/ws_client.dart';
 
 final groupsServiceProvider = Provider<GroupsService>((ref) => GroupsService());
 
@@ -23,6 +24,33 @@ class GroupsNotifier extends AsyncNotifier<List<GroupModel>> {
   Future<List<GroupModel>> build() async {
     final auth = ref.watch(authStateProvider);
     if (auth.valueOrNull?.isLoggedIn != true) return [];
+    ref.listen(wsClientProvider, (_, __) {});
+    ref.read(wsClientProvider).events.listen((event) {
+      if (event is! UserOnlineStatusEvent) return;
+      state = state.whenData(
+        (groups) => groups
+            .map(
+              (group) => GroupModel(
+                id: group.id,
+                title: group.title,
+                avatarUrl: group.avatarUrl,
+                isPersonal: group.isPersonal,
+                lastMessage: group.lastMessage,
+                members: group.members
+                    .map(
+                      (member) => member.userId == event.userId
+                          ? member.copyWithPresence(
+                              isOnline: event.isOnline,
+                              lastSeenAt: event.lastSeenAt,
+                            )
+                          : member,
+                    )
+                    .toList(),
+              ),
+            )
+            .toList(),
+      );
+    });
     return _service.getGroups();
   }
 

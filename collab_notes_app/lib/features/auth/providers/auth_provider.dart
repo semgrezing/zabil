@@ -76,16 +76,24 @@ class AuthNotifier extends AsyncNotifier<AuthState> {
     final current = state.valueOrNull?.user;
     if (current == null) return;
     await _service.deleteAvatar();
-    state = AsyncData(
-      AuthState.loggedIn(
-        UserModel(
-          id: current.id,
-          username: current.username,
-          displayName: current.displayName,
-          avatarUrl: null,
-        ),
-      ),
+    state = AsyncData(AuthState.loggedIn(current.copyWith(avatarUrl: null)));
+  }
+
+  Future<UserModel?> updateNotificationPrefs({
+    bool? notePushEnabled,
+    bool? checklistPushEnabled,
+    bool? releasePushEnabled,
+  }) async {
+    final current = state.valueOrNull?.user;
+    if (current == null) return null;
+    final updated = await _service.updateProfile(
+      displayName: current.displayName,
+      notePushEnabled: notePushEnabled,
+      checklistPushEnabled: checklistPushEnabled,
+      releasePushEnabled: releasePushEnabled,
     );
+    state = AsyncData(AuthState.loggedIn(updated));
+    return updated;
   }
 
   Future<List<Map<String, dynamic>>> getAvatarHistory() {
