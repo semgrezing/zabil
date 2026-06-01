@@ -1,15 +1,14 @@
 import { FastifyInstance } from 'fastify'
+import { authenticate } from '../../middleware/auth.js'
 import { getMentions, markMentionsRead } from './service.js'
 
 export async function mentionsRoutes(app: FastifyInstance) {
-  app.get('/', async (req) => {
-    const user = (req as any).user as { id: string }
-    return getMentions(app, user.id)
+  app.get('/', { preHandler: [authenticate] }, async (req) => {
+    return getMentions(app, req.user.userId)
   })
 
-  app.post('/read-all', async (req) => {
-    const user = (req as any).user as { id: string }
-    await markMentionsRead(app, user.id)
+  app.post('/read-all', { preHandler: [authenticate] }, async (req) => {
+    await markMentionsRead(app, req.user.userId)
     return { ok: true }
   })
 }

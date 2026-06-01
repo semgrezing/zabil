@@ -281,7 +281,8 @@ export async function getPersonalConversations(app: FastifyInstance, userId: str
         id,
         created_at
       FROM personal_messages
-      WHERE sender_id = ${userId}::uuid OR receiver_id = ${userId}::uuid
+      WHERE (sender_id = ${userId}::uuid OR receiver_id = ${userId}::uuid)
+        AND deleted_at IS NULL
     ) sub
     ORDER BY other_id, last_created_at DESC
   `

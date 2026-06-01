@@ -121,6 +121,7 @@ class _UnifiedChatList extends ConsumerWidget {
 
     final personalList = personalAsync.valueOrNull ?? [];
     final groupsList = groupsAsync.valueOrNull ?? [];
+    final personalFailed = personalAsync.hasError && personalList.isEmpty;
 
     if (personalList.isEmpty && groupsList.isEmpty) {
       return const AppEmptyState(
@@ -139,14 +140,41 @@ class _UnifiedChatList extends ConsumerWidget {
     // Sort by last message time, descending (newest first)
     items.sort((a, b) => b.lastMessageAt.compareTo(a.lastMessageAt));
 
-    return RefreshIndicator(
-      onRefresh: () async {
-        await Future.wait([
-          ref.read(personalConversationsProvider.notifier).refresh(),
-          ref.read(groupsProvider.notifier).refresh(),
-        ]);
-      },
-      child: ListView.separated(
+    return Column(
+      children: [
+        if (personalFailed)
+          Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: () => ref.read(personalConversationsProvider.notifier).refresh(),
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                color: AppColors.surfaceGlassStrong,
+                child: const Row(
+                  children: [
+                    Icon(Icons.warning_amber_rounded, size: 16, color: AppColors.fgSoft),
+                    SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Личные чаты не загрузились. Нажмите, чтобы повторить.',
+                        style: TextStyle(fontSize: 13, color: AppColors.fgSoft),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        Expanded(
+          child: RefreshIndicator(
+            onRefresh: () async {
+              await Future.wait([
+                ref.read(personalConversationsProvider.notifier).refresh(),
+                ref.read(groupsProvider.notifier).refresh(),
+              ]);
+            },
+            child: ListView.separated(
         padding: const EdgeInsets.fromLTRB(8, 12, 8, 16),
         itemCount: items.length,
         separatorBuilder: (_, __) => const SizedBox(height: 4),
@@ -188,6 +216,9 @@ class _UnifiedChatList extends ConsumerWidget {
           }
         },
       ),
+    ),
+        ),
+      ],
     );
   }
 }
