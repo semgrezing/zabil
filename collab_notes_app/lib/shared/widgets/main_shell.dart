@@ -261,7 +261,7 @@ class _MainShellState extends ConsumerState<MainShell> {
                       _InvitationsNavButton(
                         count: _pendingInvitationsCount(ref) + _unreadMentionsCount(ref),
                         isActive: location.startsWith('/invitations'),
-                        onPressed: () => context.go('/invitations'),
+                        onPressed: () => context.push('/invitations'),
                       ),
                     ],
                   ),

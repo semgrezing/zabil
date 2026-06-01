@@ -51,7 +51,7 @@ class ForceUpdateScreen extends ConsumerWidget {
                 Text(
                   hasError
                       ? 'Не удалось обновить'
-                      : 'Доступно обновление',
+                      : '🎉 Доступно обновление',
                   style: AppTypography.h1.copyWith(
                     color: AppColors.titleWhite,
                     fontSize: 28,

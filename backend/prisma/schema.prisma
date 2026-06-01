@@ -144,6 +144,7 @@ model GroupChatMessage {
   groupId   String    @map("group_id")
   senderId  String    @map("sender_id")
   noteId    String?   @map("note_id") // optional — note-chat marker
+  parentMessageId String? @map("parent_message_id")
   body      String
   imageUrl  String?   @map("image_url")
   imageMimeType String? @map("image_mime_type")
@@ -155,6 +156,8 @@ model GroupChatMessage {
   group   Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
   sender  User  @relation(fields: [senderId], references: [id], onDelete: Cascade)
   note    Note? @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  parentMessage GroupChatMessage? @relation("MessageReplies", fields: [parentMessageId], references: [id], onDelete: SetNull)
+  replies GroupChatMessage[] @relation("MessageReplies")
   reads   GroupMessageRead[]
 
   @@index([groupId, createdAt])
@@ -183,6 +186,7 @@ model PersonalMessage {
   id         String    @id @default(uuid())
   senderId   String    @map("sender_id")
   receiverId String    @map("receiver_id")
+  parentMessageId String? @map("parent_message_id")
   body       String
   imageUrl   String?   @map("image_url")
   imageMimeType String? @map("image_mime_type")
@@ -194,6 +198,8 @@ model PersonalMessage {
 
   sender   User @relation("PersonalSender", fields: [senderId], references: [id], onDelete: Cascade)
   receiver User @relation("PersonalReceiver", fields: [receiverId], references: [id], onDelete: Cascade)
+  parentMessage PersonalMessage? @relation("PersonalMessageReplies", fields: [parentMessageId], references: [id], onDelete: SetNull)
+  replies PersonalMessage[] @relation("PersonalMessageReplies")
 
   @@index([senderId, receiverId, createdAt])
   @@index([receiverId, senderId, createdAt])

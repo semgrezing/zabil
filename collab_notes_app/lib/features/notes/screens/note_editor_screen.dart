@@ -222,6 +222,11 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
         appBar: AppBar(
           title: _buildSaveStatus(),
           actions: [
+            IconButton(
+              icon: const Icon(SolarIconsOutline.calendar),
+              tooltip: 'В календарь',
+              onPressed: () => _showCalendarSheet(note),
+            ),
             if (!note.isPersonal)
               IconButton(
                 icon: const Icon(SolarIconsOutline.chatRound),
@@ -236,22 +241,9 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
                   await _moveNote(note);
                 } else if (value == 'color') {
                   await _pickColor(note);
-                } else if (value == 'calendar') {
-                  await Future<void>.delayed(Duration.zero);
-                  await _showCalendarSheet(note);
                 }
               },
               itemBuilder: (_) => const [
-                PopupMenuItem(
-                  value: 'calendar',
-                  child: Row(
-                    children: [
-                      Icon(SolarIconsOutline.calendar),
-                      SizedBox(width: 8),
-                      Text('Событие в календаре'),
-                    ],
-                  ),
-                ),
                 PopupMenuItem(
                   value: 'move',
                   child: Row(
@@ -505,6 +497,11 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
         appBar: AppBar(
           title: _buildSaveStatus(),
           actions: [
+            IconButton(
+              icon: const Icon(SolarIconsOutline.calendar),
+              tooltip: 'В календарь',
+              onPressed: () => _showCalendarSheet(note),
+            ),
             if (!note.isPersonal)
               IconButton(
                 icon: const Icon(SolarIconsOutline.chatRound),

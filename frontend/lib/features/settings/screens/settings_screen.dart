@@ -171,7 +171,7 @@ class SettingsScreen extends ConsumerWidget {
         showDialog(
           context: context,
           builder: (ctx) => AlertDialog(
-            title: const Text('Доступно обновление'),
+            title: const Text('🎉 Доступно обновление'),
             content: Text('Новая версия: $serverVersion\nТекущая: $currentVersion'),
             actions: [
               TextButton(

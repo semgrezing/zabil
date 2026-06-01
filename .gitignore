@@ -1,7 +1,35 @@
+# Secrets
 .env
+_fb_key.json
+secrets.txt
+client_secret_*.json
+
+# Dependencies
 node_modules/
+
+# Flutter / Dart
 .dart_tool/
 build/
 *.g.dart
-_fb_key.json
-secrets.txt
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Claude Code
+.claude/worktrees/
+
+# Build artifacts
+*.apk
+*.aab
+*.exe
+*.msix
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Backend releases (binary artifacts)
+backend/releases/*.apk
+backend/releases/*.exe

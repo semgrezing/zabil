@@ -37,6 +37,7 @@ class ChatsService {
     String? imageMimeType,
     int? imageSize,
     bool? imageCompressed,
+    String? parentMessageId,
   }) async {
     final response = await _dio.post(
       ApiEndpoints.groupChatMessages(groupId),
@@ -47,6 +48,7 @@ class ChatsService {
         if (imageMimeType != null) 'imageMimeType': imageMimeType,
         if (imageSize != null) 'imageSize': imageSize,
         if (imageCompressed != null) 'imageCompressed': imageCompressed,
+        if (parentMessageId != null) 'parentMessageId': parentMessageId,
       },
     );
     return GroupChatMessage.fromJson(response.data as Map<String, dynamic>);
@@ -84,11 +86,13 @@ class ChatsService {
     String? imageMimeType,
     int? imageSize,
     bool? imageCompressed,
+    String? parentMessageId,
   }) async {
     final response = await _dio.post(
       ApiEndpoints.personalMessages(userId),
       data: {
         if (body != null) 'body': body,
+        if (parentMessageId != null) 'parentMessageId': parentMessageId,
         if (imageUrl != null) 'imageUrl': imageUrl,
         if (imageMimeType != null) 'imageMimeType': imageMimeType,
         if (imageSize != null) 'imageSize': imageSize,

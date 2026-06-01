@@ -17,6 +17,7 @@ import { AppError } from '../../utils/errors.js'
 const sendGroupMessageSchema = z.object({
   body: z.string().max(4000).optional(),
   noteId: z.string().uuid().optional(),
+  parentMessageId: z.string().uuid().optional(),
   imageUrl: z.string().startsWith('/uploads/').optional(),
   imageMimeType: z.string().max(100).optional(),
   imageSize: z.number().int().positive().max(52_428_800).optional(),
@@ -25,6 +26,7 @@ const sendGroupMessageSchema = z.object({
 
 const sendPersonalMessageSchema = z.object({
   body: z.string().max(4000).optional(),
+  parentMessageId: z.string().uuid().optional(),
   imageUrl: z.string().startsWith('/uploads/').optional(),
   imageMimeType: z.string().max(100).optional(),
   imageSize: z.number().int().positive().max(52_428_800).optional(),
@@ -70,6 +72,7 @@ export async function chatsRoutes(app: FastifyInstance) {
         const message = await sendGroupMessage(app, request.user.userId, groupId, {
           body: body.body,
           noteId: body.noteId,
+          parentMessageId: body.parentMessageId,
           imageUrl: body.imageUrl,
           imageMimeType: body.imageMimeType,
           imageSize: body.imageSize,
@@ -158,6 +161,7 @@ export async function chatsRoutes(app: FastifyInstance) {
           userId,
           {
             body: body.body,
+            parentMessageId: body.parentMessageId,
             imageUrl: body.imageUrl,
             imageMimeType: body.imageMimeType,
             imageSize: body.imageSize,

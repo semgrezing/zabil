@@ -1,3 +1,35 @@
+/// Quoted parent message for replies.
+class ReplyPreview {
+  final String id;
+  final String senderId;
+  final String senderName;
+  final String body;
+
+  const ReplyPreview({
+    required this.id,
+    required this.senderId,
+    required this.senderName,
+    required this.body,
+  });
+
+  factory ReplyPreview.fromJson(Map<String, dynamic> json, {String? fallbackSenderName}) {
+    final sender = json['sender'] as Map?;
+    return ReplyPreview(
+      id: json['id'] as String? ?? '',
+      senderId: json['senderId'] as String? ?? '',
+      senderName: sender != null ? _extractDisplayName(sender) : (fallbackSenderName ?? '?'),
+      body: json['body'] as String? ?? '',
+    );
+  }
+
+  static String _extractDisplayName(Map? sender) {
+    if (sender == null) return '?';
+    final name = sender['displayName']?.toString().trim();
+    if (name != null && name.isNotEmpty) return name;
+    return sender['username']?.toString() ?? '?';
+  }
+}
+
 /// Сообщение в групповом чате (потенциально привязано к заметке).
 class GroupChatMessage {
   final String id;
@@ -18,6 +50,8 @@ class GroupChatMessage {
   final int readCount;
   /// Whether the current viewer has read this message.
   final bool isReadByMe;
+  /// Parent message for replies.
+  final ReplyPreview? replyTo;
 
   bool get isDeleted => deletedAt != null;
 
@@ -38,6 +72,7 @@ class GroupChatMessage {
     required this.createdAt,
     this.readCount = 0,
     this.isReadByMe = false,
+    this.replyTo,
   });
 
   GroupChatMessage asDeleted() => GroupChatMessage(
@@ -65,6 +100,9 @@ class GroupChatMessage {
             DateTime.now(),
         readCount: (json['readCount'] as num?)?.toInt() ?? 0,
         isReadByMe: json['isReadByMe'] as bool? ?? false,
+        replyTo: json['parentMessage'] is Map<String, dynamic>
+            ? ReplyPreview.fromJson(json['parentMessage'] as Map<String, dynamic>)
+            : null,
       );
 
   GroupChatMessage copyWith({
@@ -87,6 +125,7 @@ class GroupChatMessage {
       createdAt: createdAt,
       readCount: readCount ?? this.readCount,
       isReadByMe: isReadByMe ?? this.isReadByMe,
+      replyTo: replyTo,
     );
   }
 }
@@ -104,6 +143,7 @@ class PersonalChatMessage {
   final DateTime? readAt;
   final DateTime? deletedAt;
   final DateTime createdAt;
+  final ReplyPreview? replyTo;
 
   bool get isDeleted => deletedAt != null;
 
@@ -119,6 +159,7 @@ class PersonalChatMessage {
     required this.readAt,
     this.deletedAt,
     required this.createdAt,
+    this.replyTo,
   });
 
   PersonalChatMessage asDeleted() => PersonalChatMessage(
@@ -140,6 +181,9 @@ class PersonalChatMessage {
         readAt: DateTime.tryParse(json['readAt']?.toString() ?? ''),
         createdAt: DateTime.tryParse(json['createdAt']?.toString() ?? '') ??
             DateTime.now(),
+        replyTo: json['parentMessage'] is Map<String, dynamic>
+            ? ReplyPreview.fromJson(json['parentMessage'] as Map<String, dynamic>)
+            : null,
       );
 
   PersonalChatMessage copyWith({
@@ -156,6 +200,7 @@ class PersonalChatMessage {
       imageCompressed: imageCompressed,
       readAt: readAt ?? this.readAt,
       createdAt: createdAt,
+      replyTo: replyTo,
     );
   }
 }

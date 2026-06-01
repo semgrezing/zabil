@@ -19,6 +19,7 @@ import '../../groups/services/groups_service.dart';
 import '../../../shared/theme/app_colors.dart';
 import '../../../shared/theme/app_dimensions.dart';
 import '../../../shared/widgets/app_loader.dart';
+import '../../../shared/widgets/mention_suggestions.dart';
 import '../../../shared/widgets/typing_indicator.dart';
 import '../models/chat_message.dart';
 import '../models/chat_user_profile.dart';
@@ -65,6 +66,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   GroupModel? _groupMeta;
   final Map<String, _TypingUser> _typingUsers = {};
   Timer? _typingDebounce;
+  String? _mentionQuery;
+  int _mentionTriggerOffset = -1;
+  GroupChatMessage? _replyingTo;
+  PersonalChatMessage? _replyingToPersonal;
 
   // Composer handles its own bottom padding (keyboard + safe area)
   static const double _composerHorizontalGap = 12;
@@ -259,13 +264,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         await ref
             .read(groupChatProvider(GroupChatKey(widget.groupId!, widget.noteId))
                 .notifier)
-            .send(body: text);
+            .send(body: text, parentMessageId: _replyingTo?.id);
       } else {
         await ref
             .read(personalChatProvider(widget.userId!).notifier)
-            .send(body: text);
+            .send(body: text, parentMessageId: _replyingToPersonal?.id);
       }
       _inputCtrl.clear();
+      if (_replyingTo != null) setState(() => _replyingTo = null);
+      if (_replyingToPersonal != null) setState(() => _replyingToPersonal = null);
       // Список рендерится reverse=true, новое сообщение в начале —
       // прокручиваем к началу списка (визуально вниз).
       if (_scrollCtrl.hasClients) {
@@ -506,7 +513,31 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  if (_mentionQuery != null && _groupMeta != null)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      child: MentionSuggestions(
+                        members: _groupMeta!.members,
+                        query: _mentionQuery!,
+                        currentUserId: ref.read(authStateProvider).valueOrNull?.user?.id,
+                        onSelect: _insertMention,
+                      ),
+                    ),
                   _TypingStrip(label: _typingLabel),
+                  if (_replyingTo != null)
+                    _ReplyPreviewBar(
+                      senderName: _displayName(_replyingTo!.sender),
+                      body: _replyingTo!.body,
+                      onCancel: () => setState(() => _replyingTo = null),
+                    ),
+                  if (_replyingToPersonal != null)
+                    _ReplyPreviewBar(
+                      senderName: _replyingToPersonal!.senderId == ref.read(authStateProvider).valueOrNull?.user?.id
+                          ? 'Вы'
+                          : widget.title,
+                      body: _replyingToPersonal!.body,
+                      onCancel: () => setState(() => _replyingToPersonal = null),
+                    ),
                   _buildComposer(context),
                 ],
               ),
@@ -700,6 +731,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         onDelete: mine && !m.isDeleted
             ? () => _confirmDeleteGroupMessage(context, widget.groupId!, m.id)
             : null,
+        onMentionTap: (username) => _navigateToMentionedUser(username),
+        onReply: !m.isDeleted
+            ? () {
+                setState(() => _replyingTo = m);
+                _composerFocusNode.requestFocus();
+              }
+            : null,
+        replyTo: m.replyTo,
       ));
       // Add separator between this message and the next older message
       if (i + 1 < messages.length) {
@@ -760,6 +799,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         onDelete: mine && !m.isDeleted
             ? () => _confirmDeletePersonalMessage(context, widget.userId!, m.id)
             : null,
+        onMentionTap: (username) => _navigateToMentionedUser(username),
+        onReply: !m.isDeleted
+            ? () {
+                setState(() => _replyingToPersonal = m);
+                _composerFocusNode.requestFocus();
+              }
+            : null,
+        replyTo: m.replyTo,
       ));
       if (i + 1 < messages.length) {
         final curr = m.createdAt.toLocal();
@@ -782,6 +829,71 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     );
   }
 
+  void _navigateToMentionedUser(String username) {
+    final member = _groupMeta?.members.firstWhere(
+      (m) => m.username.toLowerCase() == username.toLowerCase(),
+      orElse: () => const GroupMemberModel(id: '', userId: '', username: '', role: ''),
+    );
+    if (member != null && member.userId.isNotEmpty) {
+      context.push('/users/${member.userId}');
+    }
+  }
+
+  void _detectMention(String text) {
+    final cursorPos = _inputCtrl.selection.baseOffset;
+    if (cursorPos < 0) {
+      if (_mentionQuery != null) setState(() => _mentionQuery = null);
+      return;
+    }
+
+    final before = text.substring(0, cursorPos);
+    final atIndex = before.lastIndexOf('@');
+
+    if (atIndex < 0 ||
+        (atIndex > 0 && before[atIndex - 1] != ' ' && before[atIndex - 1] != '\n')) {
+      if (_mentionQuery != null) {
+        setState(() {
+          _mentionQuery = null;
+          _mentionTriggerOffset = -1;
+        });
+      }
+      return;
+    }
+
+    final query = before.substring(atIndex + 1);
+    if (query.contains(' ') || query.contains('\n')) {
+      if (_mentionQuery != null) {
+        setState(() {
+          _mentionQuery = null;
+          _mentionTriggerOffset = -1;
+        });
+      }
+      return;
+    }
+
+    setState(() {
+      _mentionQuery = query;
+      _mentionTriggerOffset = atIndex;
+    });
+  }
+
+  void _insertMention(GroupMemberModel member) {
+    final text = _inputCtrl.text;
+    final before = text.substring(0, _mentionTriggerOffset);
+    final cursorPos = _inputCtrl.selection.baseOffset;
+    final after = text.substring(cursorPos);
+    final mention = '@${member.username} ';
+    final newText = '$before$mention$after';
+    _inputCtrl.value = TextEditingValue(
+      text: newText,
+      selection: TextSelection.collapsed(offset: before.length + mention.length),
+    );
+    setState(() {
+      _mentionQuery = null;
+      _mentionTriggerOffset = -1;
+    });
+  }
+
   Widget _buildComposer(BuildContext context) {
     final hasText = _inputCtrl.text.trim().isNotEmpty;
     final media = MediaQuery.of(context);
@@ -792,11 +904,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       padding: EdgeInsets.fromLTRB(12, 8, 12, bottomPad),
       child: FrostedBar(
             child: Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 // Gallery button
                 Padding(
-                  padding: const EdgeInsets.only(left: 4, bottom: 2),
+                  padding: const EdgeInsets.only(left: 4),
                   child: IconButton(
                     icon: const Icon(SolarIconsOutline.gallery, size: 20),
                     color: AppColors.fgSoft,
@@ -818,6 +930,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                     onChanged: (value) {
                       final nowHasText = value.trim().isNotEmpty;
                       if (nowHasText != hasText) setState(() {});
+
+                      _detectMention(value);
 
                       if (!nowHasText) {
                         _typingDebounce?.cancel();
@@ -845,7 +959,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                       border: InputBorder.none,
                       enabledBorder: InputBorder.none,
                       focusedBorder: InputBorder.none,
-                      contentPadding: EdgeInsets.symmetric(vertical: 12),
+                      contentPadding: EdgeInsets.symmetric(vertical: 10),
                       isDense: true,
                       filled: false,
                     ),
@@ -853,7 +967,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                 ),
                 // Right: mic (empty) or send (text)
                 Padding(
-                  padding: const EdgeInsets.only(right: 4, bottom: 2),
+                  padding: const EdgeInsets.only(right: 4),
                   child: hasText
                       ? Material(
                           color: AppColors.white,
@@ -927,6 +1041,9 @@ class _MessageBubble extends StatelessWidget {
   final VoidCallback? onNoteTap;
   final bool isDeleted;
   final VoidCallback? onDelete;
+  final void Function(String username)? onMentionTap;
+  final VoidCallback? onReply;
+  final ReplyPreview? replyTo;
 
   const _MessageBubble({
     required this.body,
@@ -943,6 +1060,9 @@ class _MessageBubble extends StatelessWidget {
     this.onNoteTap,
     this.isDeleted = false,
     this.onDelete,
+    this.onMentionTap,
+    this.onReply,
+    this.replyTo,
   });
 
   bool get _isImageOnly => imageUrl != null && body.trim().isEmpty;
@@ -981,7 +1101,7 @@ class _MessageBubble extends StatelessWidget {
     final fg = mine ? AppColors.fgContainer : AppColors.white;
     final parsedNoteColor = _safeColor(noteColorLabel);
     final hasOutsideStatus = deliveryStatus != null;
-    return GestureDetector(
+    Widget bubble = GestureDetector(
       onLongPress: (mine && onDelete != null) ? onDelete : null,
       child: Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
@@ -1013,6 +1133,46 @@ class _MessageBubble extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: [
+                    if (replyTo != null)
+                      Container(
+                        margin: const EdgeInsets.only(bottom: 6),
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: fg.withValues(alpha: 0.08),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border(
+                            left: BorderSide(
+                              color: fg.withValues(alpha: 0.4),
+                              width: 2,
+                            ),
+                          ),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              replyTo!.senderName,
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                                color: fg.withValues(alpha: 0.8),
+                              ),
+                            ),
+                            Text(
+                              replyTo!.body.length > 80
+                                  ? '${replyTo!.body.substring(0, 80)}...'
+                                  : replyTo!.body,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: fg.withValues(alpha: 0.6),
+                              ),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
+                        ),
+                      ),
                     if (noteTitle != null)
                       GestureDetector(
                         onTap: onNoteTap,
@@ -1064,9 +1224,15 @@ class _MessageBubble extends StatelessWidget {
                         ),
                       ),
                     if (body.trim().isNotEmpty)
-                      Text(
-                        body,
-                        style: TextStyle(color: fg, fontSize: 15),
+                      Text.rich(
+                        buildMentionSpans(
+                          text: body,
+                          baseStyle: TextStyle(color: fg, fontSize: 15),
+                          mentionColor: mine
+                              ? const Color(0xFF2979FF)
+                              : const Color(0xFF5B9EF4),
+                          onMentionTap: onMentionTap,
+                        ),
                       ),
                     if (imageUrl != null) ...[
                       const SizedBox(height: 8),
@@ -1112,6 +1278,30 @@ class _MessageBubble extends StatelessWidget {
         ],
       ),
     ));
+
+    if (onReply != null) {
+      return Dismissible(
+        key: ValueKey('swipe-reply-${time.toIso8601String()}'),
+        direction: mine ? DismissDirection.endToStart : DismissDirection.startToEnd,
+        confirmDismiss: (_) async {
+          onReply!();
+          return false;
+        },
+        background: Align(
+          alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
+          child: const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 16),
+            child: Icon(
+              Icons.reply_rounded,
+              color: AppColors.fgSoft,
+              size: 20,
+            ),
+          ),
+        ),
+        child: bubble,
+      );
+    }
+    return bubble;
   }
 
   Widget _senderAvatar() {
@@ -1289,6 +1479,71 @@ class _TypingStrip extends StatelessWidget {
                   ],
                 ),
               ),
+      ),
+    );
+  }
+}
+
+// ─── Reply preview bar ──────────────────────────────────────────────────────
+
+class _ReplyPreviewBar extends StatelessWidget {
+  final String senderName;
+  final String body;
+  final VoidCallback onCancel;
+
+  const _ReplyPreviewBar({
+    required this.senderName,
+    required this.body,
+    required this.onCancel,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 12),
+      padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
+      decoration: BoxDecoration(
+        color: AppColors.bg2.withValues(alpha: 0.95),
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+        border: Border(
+          left: BorderSide(color: AppColors.white.withValues(alpha: 0.4), width: 2),
+        ),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  senderName,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.white,
+                  ),
+                ),
+                Text(
+                  body.length > 60 ? '${body.substring(0, 60)}...' : body,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: AppColors.fgSoft,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.close, size: 18),
+            color: AppColors.fgSoft,
+            onPressed: onCancel,
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            padding: EdgeInsets.zero,
+          ),
+        ],
       ),
     );
   }

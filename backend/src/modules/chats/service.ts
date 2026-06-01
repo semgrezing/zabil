@@ -29,6 +29,14 @@ export async function getGroupMessages(
     include: {
       sender: { select: { id: true, username: true, displayName: true, avatarUrl: true } },
       note: { select: { id: true, title: true, colorLabel: true } },
+      parentMessage: {
+        select: {
+          id: true,
+          senderId: true,
+          body: true,
+          sender: { select: { id: true, username: true, displayName: true } },
+        },
+      },
       reads: { select: { userId: true } },
     },
     orderBy: { createdAt: 'desc' },
@@ -49,6 +57,7 @@ export async function sendGroupMessage(
   body: {
     body?: string
     noteId?: string
+    parentMessageId?: string
     imageUrl?: string
     imageMimeType?: string
     imageSize?: number
@@ -81,6 +90,7 @@ export async function sendGroupMessage(
       groupId,
       senderId,
       noteId: body.noteId ?? null,
+      parentMessageId: body.parentMessageId ?? null,
       body: hasText ? body.body!.trim().slice(0, 4000) : '',
       imageUrl: body.imageUrl ?? null,
       imageMimeType: body.imageMimeType ?? null,
@@ -91,6 +101,14 @@ export async function sendGroupMessage(
       sender: { select: { id: true, username: true, displayName: true, avatarUrl: true } },
       group: { select: { id: true, title: true } },
       note: { select: { id: true, title: true, colorLabel: true } },
+      parentMessage: {
+        select: {
+          id: true,
+          senderId: true,
+          body: true,
+          sender: { select: { id: true, username: true, displayName: true } },
+        },
+      },
     },
   })
 
@@ -109,6 +127,7 @@ export async function sendGroupMessage(
       sender: message.sender,
       noteId: message.noteId,
       note: message.note,
+      parentMessage: message.parentMessage,
       body: message.body,
       imageUrl: message.imageUrl,
       imageMimeType: message.imageMimeType,
@@ -172,6 +191,15 @@ export async function getPersonalMessages(
       ],
       ...(opts.before ? { createdAt: { lt: new Date(opts.before) } } : {}),
     },
+    include: {
+      parentMessage: {
+        select: {
+          id: true,
+          senderId: true,
+          body: true,
+        },
+      },
+    },
     orderBy: { createdAt: 'desc' },
     take: limit,
   })
@@ -183,6 +211,7 @@ export async function sendPersonalMessage(
   receiverId: string,
   payload: {
     body?: string
+    parentMessageId?: string
     imageUrl?: string
     imageMimeType?: string
     imageSize?: number
@@ -206,11 +235,21 @@ export async function sendPersonalMessage(
     data: {
       senderId,
       receiverId,
+      parentMessageId: payload.parentMessageId ?? null,
       body: hasText ? payload.body!.trim().slice(0, 4000) : '',
       imageUrl: payload.imageUrl ?? null,
       imageMimeType: payload.imageMimeType ?? null,
       imageSize: payload.imageSize ?? null,
       imageCompressed: hasImage ? payload.imageCompressed ?? true : null,
+    },
+    include: {
+      parentMessage: {
+        select: {
+          id: true,
+          senderId: true,
+          body: true,
+        },
+      },
     },
   })
 
@@ -227,6 +266,7 @@ export async function sendPersonalMessage(
       senderId: message.senderId,
       receiverId: message.receiverId,
       sender,
+      parentMessage: message.parentMessage,
       body: message.body,
       imageUrl: message.imageUrl,
       imageMimeType: message.imageMimeType,

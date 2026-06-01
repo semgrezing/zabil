@@ -250,6 +250,7 @@ class GroupChatNotifier
     String? imageMimeType,
     int? imageSize,
     bool? imageCompressed,
+    String? parentMessageId,
   }) async {
     final message = await _service.sendGroupMessage(
       arg.groupId,
@@ -259,6 +260,7 @@ class GroupChatNotifier
       imageMimeType: imageMimeType,
       imageSize: imageSize,
       imageCompressed: imageCompressed,
+      parentMessageId: parentMessageId,
     );
     state = state.whenData((list) {
       if (list.any((m) => m.id == message.id)) return list; // дубликат от WS
@@ -345,6 +347,7 @@ class PersonalChatNotifier
     String? imageMimeType,
     int? imageSize,
     bool? imageCompressed,
+    String? parentMessageId,
   }) async {
     final message = await _service.sendPersonalMessage(
       arg,
@@ -353,6 +356,7 @@ class PersonalChatNotifier
       imageMimeType: imageMimeType,
       imageSize: imageSize,
       imageCompressed: imageCompressed,
+      parentMessageId: parentMessageId,
     );
     state = state.whenData((list) {
       if (list.any((m) => m.id == message.id)) return list;
