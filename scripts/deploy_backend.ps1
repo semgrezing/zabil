@@ -33,11 +33,11 @@ Write-Host "3. Kopiruyem Prisma schema + migrations..."
 & $pscp -pw $pw -batch "$loc\prisma\migrations\20260601200000_add_note_blocks\migration.sql" "${ha}:${rem}/prisma/migrations/20260601200000_add_note_blocks/migration.sql"
 & $pscp -pw $pw -batch "$loc\prisma\migrations\20260602120000_add_parent_message_id\migration.sql" "${ha}:${rem}/prisma/migrations/20260602120000_add_parent_message_id/migration.sql"
 
-Write-Host "4. Prisma generate + migrate deploy..."
-& $plink -pw $pw -batch $ha "cd $rem && npx prisma generate && npx prisma migrate deploy && echo MIGRATE_OK"
-
-Write-Host "5. Rebuilding docker container..."
+Write-Host "4. Rebuilding docker container..."
 & $plink -pw $pw -batch $ha "cd /opt/collab && docker compose build backend 2>&1 | tail -10 && docker compose up -d backend && docker compose ps backend"
+
+Write-Host "5. Prisma generate + migrate deploy (inside container)..."
+& $plink -pw $pw -batch $ha "cd /opt/collab && docker compose exec backend npx prisma generate 2>&1 && docker compose exec backend npx prisma migrate deploy 2>&1 && echo MIGRATE_OK"
 
 Write-Host "6. Proverka health..."
 Start-Sleep -Seconds 12
