@@ -1,6 +1,6 @@
 ﻿import 'dart:async';
 import 'dart:io' show Platform;
-import 'dart:ui';
+import '../../../shared/widgets/frosted_bar.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -493,6 +493,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: _buildAppBar(context),
+      resizeToAvoidBottomInset: false,
       extendBody: true,
       body: _wrapWithPasteHandler(
         child: Stack(
@@ -682,6 +683,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         mine: mine,
         isDeleted: m.isDeleted,
         authorName: mine ? null : _displayName(m.sender),
+        authorAvatarUrl: mine ? null : _resolveImageUrl(m.sender['avatarUrl']),
+        showSenderAvatar: !mine,
+        deliveryStatus: mine
+          ? (m.readCount > 0
+            ? _MessageDeliveryStatus.read
+            : _MessageDeliveryStatus.sent)
+          : null,
         noteTitle: m.noteTitle,
         noteColorLabel: m.noteColorLabel,
         onNoteTap: (m.noteId != null && widget.noteId == null)
@@ -705,10 +713,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         items.add(_DateSeparator(date: m.createdAt.toLocal()));
       }
     }
+    final keyboard = MediaQuery.of(context).viewInsets.bottom;
+    final listBottom = keyboard > 0 ? keyboard + 80 : 80.0;
     return ListView.builder(
       controller: _scrollCtrl,
       reverse: true,
-      padding: const EdgeInsets.fromLTRB(AppSpacing.lg, AppSpacing.lg, AppSpacing.lg, 80),
+      padding: EdgeInsets.fromLTRB(AppSpacing.lg, AppSpacing.lg, AppSpacing.lg, listBottom),
       itemCount: items.length,
       itemBuilder: (context, i) => items[i],
     );
@@ -742,6 +752,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         mine: mine,
         isDeleted: m.isDeleted,
         authorName: null,
+        deliveryStatus: mine
+          ? (m.readAt != null
+            ? _MessageDeliveryStatus.read
+            : _MessageDeliveryStatus.sent)
+          : null,
         onDelete: mine && !m.isDeleted
             ? () => _confirmDeletePersonalMessage(context, widget.userId!, m.id)
             : null,
@@ -756,10 +771,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         items.add(_DateSeparator(date: m.createdAt.toLocal()));
       }
     }
+    final keyboard = MediaQuery.of(context).viewInsets.bottom;
+    final listBottom = keyboard > 0 ? keyboard + 80 : 80.0;
     return ListView.builder(
       controller: _scrollCtrl,
       reverse: true,
-      padding: const EdgeInsets.fromLTRB(AppSpacing.lg, AppSpacing.lg, AppSpacing.lg, 80),
+      padding: EdgeInsets.fromLTRB(AppSpacing.lg, AppSpacing.lg, AppSpacing.lg, listBottom),
       itemCount: items.length,
       itemBuilder: (context, i) => items[i],
     );
@@ -773,19 +790,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
     return Padding(
       padding: EdgeInsets.fromLTRB(12, 8, 12, bottomPad),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(16),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-          child: Container(
-            decoration: BoxDecoration(
-              color: AppColors.bg2.withValues(alpha: 0.75),
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(
-                color: Colors.white.withValues(alpha: 0.06),
-                width: 1,
-              ),
-            ),
+      child: FrostedBar(
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
@@ -890,8 +895,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                 ),
               ],
             ),
-          ),
-        ),
       ),
     );
   }
@@ -915,6 +918,8 @@ class _MessageBubble extends StatelessWidget {
   final DateTime time;
   final bool mine;
   final String? authorName;
+  final String? authorAvatarUrl;
+  final bool showSenderAvatar;
   final VoidCallback? authorTap;
   final _MessageDeliveryStatus? deliveryStatus;
   final String? noteTitle;
@@ -929,6 +934,8 @@ class _MessageBubble extends StatelessWidget {
     required this.time,
     required this.mine,
     required this.authorName,
+    this.authorAvatarUrl,
+    this.showSenderAvatar = false,
     this.authorTap,
     this.deliveryStatus,
     this.noteTitle,
@@ -979,9 +986,14 @@ class _MessageBubble extends StatelessWidget {
       child: Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
         mainAxisAlignment:
             mine ? MainAxisAlignment.end : MainAxisAlignment.start,
         children: [
+          if (!mine && showSenderAvatar) ...[
+            _senderAvatar(),
+            const SizedBox(width: 8),
+          ],
           if (mine && hasOutsideStatus) ...[
             _outsideDeliveryIndicator(),
             const SizedBox(width: 6),
@@ -1100,6 +1112,29 @@ class _MessageBubble extends StatelessWidget {
         ],
       ),
     ));
+  }
+
+  Widget _senderAvatar() {
+    final fallback =
+        (authorName != null && authorName!.trim().isNotEmpty)
+            ? authorName!.trim()[0].toUpperCase()
+            : '?';
+
+    return CircleAvatar(
+      radius: 14,
+      backgroundImage: authorAvatarUrl != null ? NetworkImage(authorAvatarUrl!) : null,
+      backgroundColor: AppColors.bg2,
+      child: authorAvatarUrl == null
+          ? Text(
+              fallback,
+              style: const TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: AppColors.white,
+              ),
+            )
+          : null,
+    );
   }
 
   Widget _outsideDeliveryIndicator() {

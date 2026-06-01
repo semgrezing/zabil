@@ -242,13 +242,14 @@ class _PersonalConversationCard extends StatelessWidget {
               const SizedBox(width: 12),
               // Name + preview
               Expanded(
-                child: Column(
+                child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
                             displayName,
                             style: const TextStyle(
                               fontSize: 15,
@@ -258,30 +259,8 @@ class _PersonalConversationCard extends StatelessWidget {
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
-                        ),
-                        const SizedBox(width: 8),
-                        Text(
-                          timeLabel,
-                          style: const TextStyle(
-                            fontSize: 12,
-                            color: AppColors.fgSoft,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 2),
-                    Row(
-                      children: [
-                        if (showStatus) ...[
-                          Icon(
-                            isRead ? Icons.done_all_rounded : Icons.done_rounded,
-                            size: 14,
-                            color: isRead ? AppColors.success : AppColors.fgSoft,
-                          ),
-                          const SizedBox(width: 4),
-                        ],
-                        Expanded(
-                          child: Text(
+                          const SizedBox(height: 2),
+                          Text(
                             previewText,
                             style: TextStyle(
                               fontSize: 13,
@@ -292,9 +271,35 @@ class _PersonalConversationCard extends StatelessWidget {
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (showStatus) ...[
+                              Icon(
+                                isRead ? Icons.done_all_rounded : Icons.done_rounded,
+                                size: 14,
+                                color: isRead ? AppColors.success : AppColors.fgSoft,
+                              ),
+                              const SizedBox(width: 3),
+                            ],
+                            Text(
+                              timeLabel,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: AppColors.fgSoft,
+                              ),
+                            ),
+                          ],
                         ),
                         if (unreadCount > 0) ...[
-                          const SizedBox(width: 8),
+                          const SizedBox(height: 4),
                           _UnreadBadge(count: unreadCount),
                         ],
                       ],
@@ -333,6 +338,8 @@ class _GroupConversationCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final hasMetaRight = timeLabel != null || unreadCount > 0;
+
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -351,13 +358,14 @@ class _GroupConversationCard extends StatelessWidget {
               ),
               const SizedBox(width: 12),
               Expanded(
-                child: Column(
+                child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
                             title,
                             style: const TextStyle(
                               fontSize: 15,
@@ -367,24 +375,8 @@ class _GroupConversationCard extends StatelessWidget {
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
-                        ),
-                        if (timeLabel != null) ...[
-                          const SizedBox(width: 8),
+                          const SizedBox(height: 2),
                           Text(
-                            timeLabel!,
-                            style: const TextStyle(
-                              fontSize: 12,
-                              color: AppColors.fgSoft,
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                    const SizedBox(height: 2),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
                             senderName != null ? '$senderName: $previewText' : previewText,
                             style: TextStyle(
                               fontSize: 13,
@@ -395,13 +387,29 @@ class _GroupConversationCard extends StatelessWidget {
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
-                        ),
-                        if (unreadCount > 0) ...[
-                          const SizedBox(width: 8),
-                          _UnreadBadge(count: unreadCount),
                         ],
-                      ],
+                      ),
                     ),
+                    if (hasMetaRight) ...[
+                      const SizedBox(width: 10),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          if (timeLabel != null)
+                            Text(
+                              timeLabel!,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: AppColors.fgSoft,
+                              ),
+                            ),
+                          if (unreadCount > 0) ...[
+                            const SizedBox(height: 4),
+                            _UnreadBadge(count: unreadCount),
+                          ],
+                        ],
+                      ),
+                    ],
                   ],
                 ),
               ),

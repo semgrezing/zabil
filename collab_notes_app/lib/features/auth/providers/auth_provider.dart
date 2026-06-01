@@ -38,6 +38,24 @@ class AuthNotifier extends AsyncNotifier<AuthState> {
     }
   }
 
+  Future<void> loginWithTokens({
+    required String accessToken,
+    required String refreshToken,
+  }) async {
+    state = const AsyncLoading();
+    state = await AsyncValue.guard(
+      () => _service.loginWithTokens(
+        accessToken: accessToken,
+        refreshToken: refreshToken,
+      ),
+    );
+    if (state.valueOrNull?.isLoggedIn == true) {
+      ApiClient.markSessionActive();
+      // ignore: unawaited_futures
+      NotificationService.registerWithBackend();
+    }
+  }
+
   Future<void> register(String username, String password) async {
     state = const AsyncLoading();
     state = await AsyncValue.guard(

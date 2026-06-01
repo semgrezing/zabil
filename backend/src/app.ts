@@ -22,6 +22,7 @@ import { updateRoutes } from './modules/update/routes.js'
 import { chatsRoutes } from './modules/chats/routes.js'
 import { notificationsRoutes } from './modules/notifications/routes.js'
 import { activityRoutes } from './modules/activity/routes.js'
+import { mentionsRoutes } from './modules/mentions/routes.js'
 import {
   addConnection, removeConnection,
   joinNote, leaveNote, leaveAllNotes, broadcastToNote,
@@ -36,6 +37,10 @@ function ensureDir(dir: string) {
   } catch (e) {
     console.warn('[bootstrap] не удалось создать', dir, e)
   }
+}
+
+function sanitizeDownloadFileName(fileName: string) {
+  return fileName.replace(/["\r\n]/g, '_')
 }
 
 export async function buildApp() {
@@ -87,6 +92,20 @@ export async function buildApp() {
     root: path.resolve(env.RELEASES_PATH),
     prefix: '/releases/',
     decorateReply: false,
+    setHeaders: (res, filePath) => {
+      const fileName = sanitizeDownloadFileName(path.basename(filePath))
+      const ext = path.extname(fileName).toLowerCase()
+
+      if (ext === '.apk') {
+        res.setHeader('Content-Type', 'application/vnd.android.package-archive')
+      } else if (ext === '.exe') {
+        res.setHeader('Content-Type', 'application/octet-stream')
+      }
+
+      res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`)
+      res.setHeader('Cache-Control', 'public, max-age=0, no-transform')
+      res.setHeader('X-Download-Options', 'noopen')
+    },
   })
 
   // Core plugins
@@ -121,6 +140,7 @@ export async function buildApp() {
     await api.register(chatsRoutes, { prefix: '/chats' })
     await api.register(notificationsRoutes, { prefix: '/devices' })
     await api.register(activityRoutes, { prefix: '/activity' })
+    await api.register(mentionsRoutes, { prefix: '/mentions' })
   }, { prefix: '/api/v1' })
 
   // WebSocket endpoint: /api/v1/ws?token=<JWT>

@@ -9,9 +9,13 @@ import {
   moveNote,
   addChecklistItem, updateChecklistItem, deleteChecklistItem,
 } from './service.js'
+import { blockRoutes } from './block-routes.js'
 import { AppError } from '../../utils/errors.js'
 
 export async function notesRoutes(app: FastifyInstance) {
+  // Block sub-routes: /notes/:noteId/blocks/*
+  app.register(blockRoutes, { prefix: '/:noteId/blocks' })
+
   // GET /notes
   app.get('/', { preHandler: [authenticate] }, async (request, reply) => {
     const queryResult = notesQuerySchema.safeParse(request.query)

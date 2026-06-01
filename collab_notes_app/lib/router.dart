@@ -96,7 +96,6 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: '/activity',
         builder: (_, __) => const ActivityFeedScreen(),
       ),
-
       // User profile (from personal chat header)
       GoRoute(
         path: '/users/:id',

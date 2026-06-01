@@ -22,4 +22,9 @@ class AppConfig {
     'APP_VERSION',
     defaultValue: '1.0.0',
   );
+
+  static const String telegramCallbackScheme = String.fromEnvironment(
+    'TELEGRAM_CALLBACK_SCHEME',
+    defaultValue: 'collabnotes',
+  );
 }

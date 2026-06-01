@@ -37,6 +37,8 @@ model User {
   sentPersonalMessages     PersonalMessage[] @relation("PersonalSender")
   receivedPersonalMessages PersonalMessage[] @relation("PersonalReceiver")
   deviceTokens   DeviceToken[]
+  mentionsReceived Mention[] @relation("MentionedUser")
+  mentionsSent     Mention[] @relation("MentionerUser")
 
   @@map("users")
 }
@@ -68,6 +70,7 @@ model Group {
   invitations Invitation[]
   notes       Note[]
   chatMessages GroupChatMessage[]
+  mentions    Mention[]
 
   @@map("groups")
 }
@@ -100,6 +103,7 @@ model Invitation {
   receiver User  @relation("InvitationReceiver", fields: [receiverId], references: [id], onDelete: Cascade)
 
   @@index([receiverId, status])
+  @@index([senderId, status])
   @@map("invitations")
 }
 
@@ -116,15 +120,18 @@ model Note {
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
 
+  migrated  Boolean   @default(false)
+
   group         Group               @relation(fields: [groupId], references: [id], onDelete: Cascade)
   creator       User                @relation(fields: [createdBy], references: [id])
   checklistItems NoteChecklistItem[]
   images        NoteImage[]
+  blocks        NoteBlock[]
   chatMessages  GroupChatMessage[]
+  mentions      Mention[]
 
-  @@index([groupId])
-  @@index([archived])
-  @@index([pinned])
+  @@index([groupId, archived, deletedAt])
+  @@index([groupId, pinned, deletedAt])
   @@index([deletedAt])
   @@map("notes")
 }
@@ -152,6 +159,7 @@ model GroupChatMessage {
 
   @@index([groupId, createdAt])
   @@index([noteId, createdAt])
+  @@index([senderId, createdAt])
   @@map("group_chat_messages")
 }
 
@@ -240,6 +248,21 @@ model AvatarHistory {
   @@map("avatar_history")
 }
 
+model NoteBlock {
+  id        String   @id @default(uuid())
+  noteId    String   @map("note_id")
+  type      String   // text | checklist | image | divider
+  content   String   @default("{}")
+  position  Int
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  note Note @relation(fields: [noteId], references: [id], onDelete: Cascade)
+
+  @@index([noteId, position])
+  @@map("note_blocks")
+}
+
 model NoteChecklistItem {
   id        String   @id @default(uuid())
   noteId    String   @map("note_id")
@@ -254,6 +277,26 @@ model NoteChecklistItem {
   @@index([noteId, position])
   @@index([noteId, sectionId, position])
   @@map("note_checklist_items")
+}
+
+model Mention {
+  id              String   @id @default(uuid())
+  mentionedUserId String   @map("mentioned_user_id")
+  mentionerUserId String   @map("mentioner_user_id")
+  context         String   // 'group_message' | 'personal_message' | 'note'
+  groupId         String?  @map("group_id")
+  noteId          String?  @map("note_id")
+  messageId       String?  @map("message_id")
+  read            Boolean  @default(false)
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  mentionedUser User   @relation("MentionedUser", fields: [mentionedUserId], references: [id], onDelete: Cascade)
+  mentioner     User   @relation("MentionerUser", fields: [mentionerUserId], references: [id], onDelete: Cascade)
+  group         Group? @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  note          Note?  @relation(fields: [noteId], references: [id], onDelete: Cascade)
+
+  @@index([mentionedUserId, read, createdAt])
+  @@map("mentions")
 }
 
 model NoteImage {
@@ -271,3 +314,4 @@ model NoteImage {
   @@index([noteId])
   @@map("note_images")
 }
+

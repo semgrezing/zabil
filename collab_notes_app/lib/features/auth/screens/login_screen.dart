@@ -1,8 +1,13 @@
 import 'dart:ui' as ui;
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:flutter_web_auth_2/flutter_web_auth_2.dart';
 import 'package:go_router/go_router.dart';
+import '../../../core/config/api_endpoints.dart';
+import '../../../core/config/app_config.dart';
 import '../providers/auth_provider.dart';
 
 // ─── Figma design tokens ──────────────────────────────────────────────────────
@@ -57,10 +62,58 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   }
 
   String _parseError(Object e) {
-    final s = e.toString();
-    if (s.contains('Неверное')) return 'Неверное имя пользователя или пароль';
-    if (s.contains('Connection')) return 'Нет соединения с сервером';
+    if (e is DioException) {
+      final data = e.response?.data;
+      if (data is Map) {
+        final code = data['code']?.toString();
+        final message = data['error']?.toString().trim();
+        if (code == 'NOT_CONFIGURED') {
+          return 'Telegram OAuth пока не настроен на сервере';
+        }
+        if (code == 'INVALID_HASH') {
+          return 'Telegram не подтвердил подлинность входа';
+        }
+        if (message != null && message.isNotEmpty) {
+          return message;
+        }
+      }
+
+      if (e.type == DioExceptionType.connectionError ||
+          e.type == DioExceptionType.connectionTimeout ||
+          e.type == DioExceptionType.receiveTimeout) {
+        return 'Нет соединения с сервером';
+      }
+    }
+
+    final s = e.toString().toLowerCase();
+    if (s.contains('неверное')) return 'Неверное имя пользователя или пароль';
+    if (s.contains('connection') || s.contains('socketexception')) {
+      return 'Нет соединения с сервером';
+    }
     return 'Произошла ошибка. Попробуйте ещё раз';
+  }
+
+  String _parseTelegramCallbackError(String error, String? description) {
+    final normalized = error.toLowerCase();
+    if (normalized == 'not_configured') {
+      return 'Telegram OAuth пока не настроен на сервере';
+    }
+    if (normalized == 'invalid_hash') {
+      return 'Telegram не подтвердил подлинность входа';
+    }
+    if (normalized == 'validation_error') {
+      return 'Telegram вернул неполные данные авторизации';
+    }
+    if (normalized == 'telegram_unreachable') {
+      return 'Сервер временно не может подключиться к Telegram. Попробуйте позже';
+    }
+    if (normalized == 'token_exchange_failed') {
+      return 'Telegram временно недоступен для завершения входа';
+    }
+
+    final text = description?.trim();
+    if (text != null && text.isNotEmpty) return text;
+    return 'Вход через Telegram не выполнен';
   }
 
   @override
@@ -291,12 +344,57 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   }
 
   Future<void> _loginWithTelegram() async {
-    // TODO: Implement actual Telegram OAuth flow when TELEGRAM_BOT_TOKEN is configured.
-    // This requires a real Telegram Bot Token and a publicly accessible server.
-    // The flow: open Telegram Login Widget URL → get auth data → POST /auth/telegram
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Telegram OAuth — coming soon')),
-    );
+    setState(() => _error = null);
+
+    try {
+      final authUrl = Uri.parse('${AppConfig.baseUrl}${ApiEndpoints.telegramStart}');
+      final callbackRaw = await FlutterWebAuth2.authenticate(
+        url: authUrl.toString(),
+        callbackUrlScheme: AppConfig.telegramCallbackScheme,
+      );
+
+      final callbackUri = Uri.parse(callbackRaw);
+      final callbackError = callbackUri.queryParameters['error'];
+      if (callbackError != null && callbackError.isNotEmpty) {
+        if (!mounted) return;
+        setState(() {
+          _error = _parseTelegramCallbackError(
+            callbackError,
+            callbackUri.queryParameters['error_description'],
+          );
+        });
+        return;
+      }
+
+      final accessToken = callbackUri.queryParameters['accessToken'];
+      final refreshToken = callbackUri.queryParameters['refreshToken'];
+      if (accessToken == null || refreshToken == null) {
+        if (!mounted) return;
+        setState(() => _error = 'Telegram OAuth вернул неполные данные');
+        return;
+      }
+
+      await ref.read(authStateProvider.notifier).loginWithTokens(
+            accessToken: accessToken,
+            refreshToken: refreshToken,
+          );
+      if (!mounted) return;
+      ref.read(authStateProvider).whenOrNull(
+        error: (e, _) => setState(() => _error = _parseError(e)),
+      );
+    } on PlatformException catch (e) {
+      if (!mounted) return;
+
+      final code = e.code.toLowerCase();
+      if (code.contains('cancel')) {
+        return;
+      }
+
+      setState(() => _error = 'Не удалось завершить вход через Telegram');
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _error = _parseError(e));
+    }
   }
 }
 

@@ -12,6 +12,15 @@ export interface TelegramLoginData {
   hash: string
 }
 
+export interface TelegramProfileData {
+  id: string
+  username?: string
+  firstName?: string
+  lastName?: string
+  displayName?: string
+  photoUrl?: string
+}
+
 /**
  * Verify Telegram Login Widget data.
  * See: https://core.telegram.org/widgets/login#checking-authorization
@@ -37,19 +46,25 @@ export function verifyTelegramLogin(data: TelegramLoginData, botToken: string): 
   return true
 }
 
+function resolveDisplayName(profile: TelegramProfileData): string {
+  const explicit = profile.displayName?.trim()
+  if (explicit) return explicit
+  return [profile.firstName, profile.lastName].filter(Boolean).join(' ').trim()
+}
+
 /**
  * Upsert user by telegramId and issue tokens.
  */
-export async function loginWithTelegram(app: FastifyInstance, data: TelegramLoginData) {
-  const telegramId = String(data.id)
-  const displayName = [data.first_name, data.last_name].filter(Boolean).join(' ')
+export async function loginWithTelegramProfile(app: FastifyInstance, profile: TelegramProfileData) {
+  const telegramId = String(profile.id)
+  const displayName = resolveDisplayName(profile)
 
   // Try to find existing user by telegramId
   let user = await app.prisma.user.findUnique({ where: { telegramId } })
 
   if (!user) {
     // Create new user from Telegram data
-    const baseUsername = data.username ?? `tg_${telegramId}`
+    const baseUsername = profile.username ?? `tg_${telegramId}`
     let username = baseUsername
     let attempt = 0
     while (await app.prisma.user.findUnique({ where: { username } })) {
@@ -62,7 +77,7 @@ export async function loginWithTelegram(app: FastifyInstance, data: TelegramLogi
         username,
         passwordHash: '', // No password for Telegram-only accounts
         displayName: displayName || null,
-        avatarUrl: data.photo_url ?? null,
+        avatarUrl: profile.photoUrl ?? null,
         telegramId,
       },
     })
@@ -72,7 +87,7 @@ export async function loginWithTelegram(app: FastifyInstance, data: TelegramLogi
       where: { id: user.id },
       data: {
         displayName: displayName || user.displayName,
-        avatarUrl: data.photo_url ?? user.avatarUrl,
+        avatarUrl: profile.photoUrl ?? user.avatarUrl,
       },
     })
   }
@@ -88,4 +103,17 @@ export async function loginWithTelegram(app: FastifyInstance, data: TelegramLogi
     },
     ...tokens,
   }
+}
+
+/**
+ * Legacy Telegram Login Widget payload (hash-signed fields).
+ */
+export async function loginWithTelegram(app: FastifyInstance, data: TelegramLoginData) {
+  return loginWithTelegramProfile(app, {
+    id: String(data.id),
+    username: data.username,
+    firstName: data.first_name,
+    lastName: data.last_name,
+    photoUrl: data.photo_url,
+  })
 }

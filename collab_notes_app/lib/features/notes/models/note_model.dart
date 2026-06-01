@@ -1,4 +1,7 @@
+import 'dart:convert';
+import 'package:flutter_quill/flutter_quill.dart';
 import '../../../core/config/app_config.dart';
+import 'note_block_model.dart';
 
 class ChecklistItem {
   final String id;
@@ -99,6 +102,8 @@ class NoteModel {
   final Map<String, String> creator;
   final List<ChecklistItem> checklistItems;
   final List<NoteImage> images;
+  final List<NoteBlockModel> blocks;
+  final bool migrated;
 
   const NoteModel({
     required this.id,
@@ -115,7 +120,29 @@ class NoteModel {
     required this.creator,
     required this.checklistItems,
     required this.images,
+    this.blocks = const [],
+    this.migrated = false,
   });
+
+  Document get contentDocument {
+    if (content.isEmpty) return Document();
+    try {
+      final list = jsonDecode(content) as List;
+      return Document.fromJson(list);
+    } catch (_) {
+      return Document()..insert(0, content);
+    }
+  }
+
+  static String extractPlainText(String deltaJson) {
+    if (deltaJson.isEmpty) return '';
+    try {
+      final list = jsonDecode(deltaJson) as List;
+      return Document.fromJson(list).toPlainText().trim();
+    } catch (_) {
+      return deltaJson;
+    }
+  }
 
   factory NoteModel.fromJson(Map<String, dynamic> json) => NoteModel(
         id: json['id'] as String,
@@ -140,5 +167,9 @@ class NoteModel {
         images: (json['images'] as List<dynamic>? ?? [])
             .map((e) => NoteImage.fromJson(e as Map<String, dynamic>))
             .toList(),
+        blocks: (json['blocks'] as List<dynamic>? ?? [])
+            .map((e) => NoteBlockModel.fromJson(e as Map<String, dynamic>))
+            .toList(),
+        migrated: json['migrated'] as bool? ?? false,
       );
 }

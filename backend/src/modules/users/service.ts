@@ -17,6 +17,16 @@ function resolveAvatarPath(avatarUrl: string) {
   return path.join(env.UPLOADS_PATH, 'avatars', filename)
 }
 
+const userProfileSelect = {
+  id: true,
+  username: true,
+  displayName: true,
+  avatarUrl: true,
+  notePushEnabled: true,
+  checklistPushEnabled: true,
+  releasePushEnabled: true,
+} as const
+
 export async function getMe(app: FastifyInstance, userId: string) {
   const user = await app.prisma.user.findUnique({
     where: { id: userId },

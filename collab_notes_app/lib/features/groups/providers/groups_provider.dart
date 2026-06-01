@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/group_model.dart';
 import '../services/groups_service.dart';
@@ -19,37 +21,100 @@ final groupsProvider =
 
 class GroupsNotifier extends AsyncNotifier<List<GroupModel>> {
   GroupsService get _service => ref.read(groupsServiceProvider);
+  StreamSubscription? _wsSub;
 
   @override
   Future<List<GroupModel>> build() async {
     final auth = ref.watch(authStateProvider);
     if (auth.valueOrNull?.isLoggedIn != true) return [];
-    ref.listen(wsClientProvider, (_, __) {});
-    ref.read(wsClientProvider).events.listen((event) {
-      if (event is! UserOnlineStatusEvent) return;
-      state = state.whenData(
-        (groups) => groups
-            .map(
-              (group) => GroupModel(
-                id: group.id,
-                title: group.title,
-                avatarUrl: group.avatarUrl,
-                isPersonal: group.isPersonal,
-                lastMessage: group.lastMessage,
-                members: group.members
-                    .map(
-                      (member) => member.userId == event.userId
-                          ? member.copyWithPresence(
-                              isOnline: event.isOnline,
-                              lastSeenAt: event.lastSeenAt,
-                            )
-                          : member,
-                    )
-                    .toList(),
-              ),
-            )
-            .toList(),
-      );
+    final myUserId = auth.valueOrNull?.user?.id;
+
+    _wsSub?.cancel();
+    _wsSub = ref.read(wsClientProvider).events.listen((event) {
+      if (event is WsReconnectedEvent) {
+        refresh();
+        return;
+      }
+      if (event is UserOnlineStatusEvent) {
+        state = state.whenData(
+          (groups) => groups
+              .map(
+                (group) => GroupModel(
+                  id: group.id,
+                  title: group.title,
+                  avatarUrl: group.avatarUrl,
+                  isPersonal: group.isPersonal,
+                  lastMessage: group.lastMessage,
+                  unreadCount: group.unreadCount,
+                  members: group.members
+                      .map(
+                        (member) => member.userId == event.userId
+                            ? member.copyWithPresence(
+                                isOnline: event.isOnline,
+                                lastSeenAt: event.lastSeenAt,
+                              )
+                            : member,
+                      )
+                      .toList(),
+                ),
+              )
+              .toList(),
+        );
+        return;
+      }
+      if (event is GroupMessageEvent) {
+        final data = event.data;
+        final groupId = data['groupId'] as String?;
+        final senderId = data['senderId'] as String?;
+        if (groupId == null) return;
+        state = state.whenData((groups) => groups.map((g) {
+          if (g.id != groupId) return g;
+          final sender = data['sender'] as Map<String, dynamic>?;
+          final newLast = GroupLastMessageModel(
+            id: (data['id'] as String?) ?? '',
+            body: (data['body'] as String?) ?? '',
+            imageUrl: data['imageUrl'] as String?,
+            createdAt: DateTime.tryParse(
+                  (data['createdAt'] as String?) ?? '',
+                ) ??
+                DateTime.now(),
+            sender: GroupLastMessageSenderModel.fromJson(
+              sender?.cast<String, dynamic>() ?? const {},
+            ),
+          );
+          final isFromMe = senderId == myUserId;
+          return GroupModel(
+            id: g.id,
+            title: g.title,
+            avatarUrl: g.avatarUrl,
+            isPersonal: g.isPersonal,
+            members: g.members,
+            lastMessage: newLast,
+            unreadCount: isFromMe ? g.unreadCount : g.unreadCount + 1,
+          );
+        }).toList());
+        return;
+      }
+      if (event is GroupReadReceiptEvent) {
+        if (event.readerId != myUserId) return;
+        state = state.whenData((groups) => groups.map((g) {
+          if (g.id != event.groupId) return g;
+          return GroupModel(
+            id: g.id,
+            title: g.title,
+            avatarUrl: g.avatarUrl,
+            isPersonal: g.isPersonal,
+            members: g.members,
+            lastMessage: g.lastMessage,
+            unreadCount: 0,
+          );
+        }).toList());
+        return;
+      }
+    });
+    ref.onDispose(() {
+      _wsSub?.cancel();
+      _wsSub = null;
     });
     return _service.getGroups();
   }

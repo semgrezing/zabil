@@ -3,12 +3,15 @@
 #
 
 list(APPEND FLUTTER_PLUGIN_LIST
+  desktop_webview_window
   file_selector_windows
   firebase_core
   flutter_secure_storage_windows
   local_notifier
   pasteboard
+  share_plus
   url_launcher_windows
+  window_to_front
 )
 
 list(APPEND FLUTTER_FFI_PLUGIN_LIST

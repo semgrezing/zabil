@@ -1,0 +1,21 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Flutter: App (Windows, Hot Reload)",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/main.dart",
+      "flutterMode": "debug",
+      "deviceId": "windows"
+    },
+    {
+      "name": "Flutter: UI Lab (Windows, Hot Reload)",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/ui_lab/main_ui_lab.dart",
+      "flutterMode": "debug",
+      "deviceId": "windows"
+    }
+  ]
+}

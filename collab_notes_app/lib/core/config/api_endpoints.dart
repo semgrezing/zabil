@@ -4,6 +4,7 @@ class ApiEndpoints {
   // Auth
   static const String register = '/auth/register';
   static const String login = '/auth/login';
+  static const String telegramStart = '/auth/telegram/start';
   static const String refresh = '/auth/refresh';
   static const String logout = '/auth/logout';
 
@@ -44,6 +45,9 @@ class ApiEndpoints {
   static String archiveNote(String id) => '/notes/$id/archive';
   static String noteChecklist(String noteId) => '/notes/$noteId/checklist';
   static String checklistItem(String noteId, String itemId) => '/notes/$noteId/checklist/$itemId';
+  static String noteBlocks(String noteId) => '/notes/$noteId/blocks';
+  static String noteBlock(String noteId, String blockId) => '/notes/$noteId/blocks/$blockId';
+  static String reorderNoteBlocks(String noteId) => '/notes/$noteId/blocks/reorder';
 
   // Uploads
   static const String uploadNoteImage = '/uploads/note-image';
@@ -59,6 +63,10 @@ class ApiEndpoints {
 
   // Activity feed
   static const String activityFeed = '/activity/feed';
+
+  // Mentions
+  static const String mentions = '/mentions';
+  static const String mentionsReadAll = '/mentions/read-all';
 
   // Chats (Stage 7)
   static String groupChatMessages(String groupId) => '/chats/groups/$groupId/messages';

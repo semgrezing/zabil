@@ -1,62 +1,272 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:solar_icons/solar_icons.dart';
 import '../models/invitation_model.dart';
 import '../models/invitation_action_result.dart';
 import '../providers/invitations_provider.dart';
+import '../../mentions/models/mention_model.dart';
+import '../../mentions/providers/mentions_provider.dart';
 import '../../../shared/theme/app_colors.dart';
 import '../../../shared/theme/app_dimensions.dart';
 import '../../../shared/widgets/app_loader.dart';
 
-class InvitationsScreen extends ConsumerWidget {
+class InvitationsScreen extends ConsumerStatefulWidget {
   const InvitationsScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<InvitationsScreen> createState() => _InvitationsScreenState();
+}
+
+class _InvitationsScreenState extends ConsumerState<InvitationsScreen>
+    with SingleTickerProviderStateMixin {
+  late final TabController _tabs;
+
+  @override
+  void initState() {
+    super.initState();
+    _tabs = TabController(length: 2, vsync: this);
+    _tabs.addListener(() {
+      if (_tabs.index == 1 && !_tabs.indexIsChanging) {
+        _markMentionsRead();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _tabs.dispose();
+    super.dispose();
+  }
+
+  void _markMentionsRead() {
+    final mentions = ref.read(mentionsProvider).valueOrNull ?? [];
+    if (mentions.any((m) => !m.read)) {
+      ref.read(mentionsProvider.notifier).markAllRead();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final invitationsAsync = ref.watch(invitationsProvider);
+    final mentionsAsync = ref.watch(mentionsProvider);
+
+    final invCount = invitationsAsync.valueOrNull?.length ?? 0;
+    final mentUnread = (mentionsAsync.valueOrNull ?? []).where((m) => !m.read).length;
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Приглашения'),
+        title: const Text('Входящие'),
         actions: [
           IconButton(
             icon: const Icon(SolarIconsOutline.refresh),
-            onPressed: () => ref.read(invitationsProvider.notifier).refresh(),
+            onPressed: () {
+              ref.read(invitationsProvider.notifier).refresh();
+              ref.read(mentionsProvider.notifier).refresh();
+            },
           ),
         ],
-      ),
-      body: invitationsAsync.when(
-        loading: () => const AppLoader(),
-        error: (err, _) => AppErrorState(
-          message: 'Не удалось загрузить приглашения',
-          onRetry: () => ref.read(invitationsProvider.notifier).refresh(),
-        ),
-        data: (invitations) {
-          if (invitations.isEmpty) {
-            return const AppEmptyState(
-              icon: SolarIconsOutline.letter,
-              message: 'Нет входящих приглашений',
-              hint: 'Когда вас пригласят в группу, оно появится здесь',
-            );
-          }
-
-          return RefreshIndicator(
-            onRefresh: () => ref.read(invitationsProvider.notifier).refresh(),
-            child: ListView.separated(
-              padding: const EdgeInsets.all(AppSpacing.lg),
-              itemCount: invitations.length,
-              separatorBuilder: (_, __) =>
-                  const SizedBox(height: AppSpacing.sm),
-              itemBuilder: (context, index) {
-                return _InvitationCard(invitation: invitations[index]);
-              },
+        bottom: TabBar(
+          controller: _tabs,
+          tabs: [
+            Tab(
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('Приглашения'),
+                  if (invCount > 0) ...[
+                    const SizedBox(width: 6),
+                    _TabBadge(invCount),
+                  ],
+                ],
+              ),
             ),
-          );
-        },
+            Tab(
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('Упоминания'),
+                  if (mentUnread > 0) ...[
+                    const SizedBox(width: 6),
+                    _TabBadge(mentUnread),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+      body: TabBarView(
+        controller: _tabs,
+        children: [
+          _InvitationsTab(invitationsAsync: invitationsAsync),
+          _MentionsTab(mentionsAsync: mentionsAsync),
+        ],
       ),
     );
   }
 }
+
+class _TabBadge extends StatelessWidget {
+  final int count;
+  const _TabBadge(this.count);
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: AppColors.white,
+        borderRadius: BorderRadius.circular(99),
+      ),
+      child: Text(
+        count > 99 ? '99+' : count.toString(),
+        style: const TextStyle(
+          fontSize: 10,
+          fontWeight: FontWeight.w700,
+          color: AppColors.fgContainer,
+        ),
+      ),
+    );
+  }
+}
+
+// ─── Invitations tab ──────────────────────────────────────────────────────────
+
+class _InvitationsTab extends ConsumerWidget {
+  final AsyncValue<List<InvitationModel>> invitationsAsync;
+  const _InvitationsTab({required this.invitationsAsync});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return invitationsAsync.when(
+      loading: () => const AppLoader(),
+      error: (err, _) => AppErrorState(
+        message: 'Не удалось загрузить приглашения',
+        onRetry: () => ref.read(invitationsProvider.notifier).refresh(),
+      ),
+      data: (invitations) {
+        if (invitations.isEmpty) {
+          return const AppEmptyState(
+            icon: SolarIconsOutline.letter,
+            message: 'Нет входящих приглашений',
+            hint: 'Когда вас пригласят в группу, оно появится здесь',
+          );
+        }
+        return RefreshIndicator(
+          onRefresh: () => ref.read(invitationsProvider.notifier).refresh(),
+          child: ListView.separated(
+            padding: const EdgeInsets.all(AppSpacing.lg),
+            itemCount: invitations.length,
+            separatorBuilder: (_, __) => const SizedBox(height: AppSpacing.sm),
+            itemBuilder: (context, index) =>
+                _InvitationCard(invitation: invitations[index]),
+          ),
+        );
+      },
+    );
+  }
+}
+
+// ─── Mentions tab ─────────────────────────────────────────────────────────────
+
+class _MentionsTab extends ConsumerWidget {
+  final AsyncValue<List<MentionModel>> mentionsAsync;
+  const _MentionsTab({required this.mentionsAsync});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return mentionsAsync.when(
+      loading: () => const AppLoader(),
+      error: (err, _) => AppErrorState(
+        message: 'Не удалось загрузить упоминания',
+        onRetry: () => ref.read(mentionsProvider.notifier).refresh(),
+      ),
+      data: (mentions) {
+        if (mentions.isEmpty) {
+          return const AppEmptyState(
+            icon: SolarIconsOutline.letterOpened,
+            message: 'Нет упоминаний',
+            hint: 'Когда кто-то напишет @вашеимя, вы увидите это здесь',
+          );
+        }
+        return RefreshIndicator(
+          onRefresh: () => ref.read(mentionsProvider.notifier).refresh(),
+          child: ListView.separated(
+            padding: const EdgeInsets.all(AppSpacing.lg),
+            itemCount: mentions.length,
+            separatorBuilder: (_, __) => const SizedBox(height: AppSpacing.sm),
+            itemBuilder: (context, index) =>
+                _MentionCard(mention: mentions[index]),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _MentionCard extends StatelessWidget {
+  final MentionModel mention;
+  const _MentionCard({required this.mention});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      child: InkWell(
+        borderRadius: BorderRadius.circular(AppRadii.md),
+        onTap: () {
+          final path = mention.navigatePath;
+          if (path != null) context.push(path);
+        },
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpacing.lg),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(
+                mention.read
+                    ? SolarIconsOutline.letterOpened
+                    : SolarIconsBold.letterOpened,
+                size: 20,
+                color: mention.read ? AppColors.fgSoft : AppColors.white,
+              ),
+              const SizedBox(width: AppSpacing.md),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      mention.mentionerLabel,
+                      style: theme.textTheme.titleSmall?.copyWith(
+                        fontWeight: mention.read
+                            ? FontWeight.w400
+                            : FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'упомянул вас ${mention.contextLabel}',
+                      style: theme.textTheme.bodySmall,
+                    ),
+                  ],
+                ),
+              ),
+              if (mention.navigatePath != null)
+                const Icon(
+                  SolarIconsOutline.altArrowRight,
+                  size: 16,
+                  color: AppColors.fgSoft,
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ─── Invitation card ──────────────────────────────────────────────────────────
 
 /// Карточка приглашения с per-item loading state.
 ///
@@ -196,8 +406,6 @@ class _InvitationCardState extends ConsumerState<_InvitationCard> {
               style: theme.textTheme.bodySmall,
             ),
             const SizedBox(height: AppSpacing.md),
-            // Vanilla Material buttons — без AppButton чтобы исключить
-            // подозрения на WidgetStateProperty layout (Stage 7-bugfix).
             Row(
               children: [
                 Expanded(

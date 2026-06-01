@@ -25,6 +25,38 @@ class AuthService {
     return _handleAuthResponse(response.data);
   }
 
+  Future<AuthState> loginWithTokens({
+    required String accessToken,
+    required String refreshToken,
+  }) async {
+    await _storage.saveTokens(
+      accessToken: accessToken,
+      refreshToken: refreshToken,
+    );
+
+    try {
+      final me = await _dio.get(ApiEndpoints.userMe);
+      final user = UserModel.fromJson(me.data as Map<String, dynamic>);
+      return AuthState.loggedIn(user);
+    } catch (_) {
+      final parts = accessToken.split('.');
+      if (parts.length != 3) {
+        await _storage.clearTokens();
+        throw Exception('Не удалось прочитать профиль пользователя');
+      }
+
+      final payload = _decodeBase64(parts[1]);
+      final userId = payload['userId'] as String?;
+      final username = payload['username'] as String?;
+      if (userId == null || username == null) {
+        await _storage.clearTokens();
+        throw Exception('Не удалось прочитать профиль пользователя');
+      }
+
+      return AuthState.loggedIn(UserModel(id: userId, username: username));
+    }
+  }
+
   Future<void> logout(String refreshToken) async {
     try {
       await _dio.post(ApiEndpoints.logout, data: {'refreshToken': refreshToken});

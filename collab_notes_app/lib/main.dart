@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_quill/flutter_quill.dart';
+import 'package:intl/date_symbol_data_local.dart';
 import 'core/notifications/notification_service.dart';
 import 'router.dart';
 import 'shared/theme/app_theme.dart';
@@ -10,6 +12,7 @@ import 'features/updates/screens/force_update_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await initializeDateFormatting();
   // Best-effort init: при ошибках (нет Firebase config и т.п.)
   // приложение продолжает работу без push.
   await NotificationService.init();
@@ -34,6 +37,7 @@ class CollabNotesApp extends ConsumerWidget {
       return MaterialApp(
         title: 'Совместные заметки',
         debugShowCheckedModeBanner: false,
+        localizationsDelegates: const [FlutterQuillLocalizations.delegate],
         themeMode: themeMode,
         theme: AppTheme.light,
         darkTheme: AppTheme.dark,
@@ -48,6 +52,7 @@ class CollabNotesApp extends ConsumerWidget {
     return MaterialApp.router(
       title: 'Совместные заметки',
       debugShowCheckedModeBanner: false,
+      localizationsDelegates: const [FlutterQuillLocalizations.delegate],
       themeMode: themeMode,
       theme: AppTheme.light,
       darkTheme: AppTheme.dark,

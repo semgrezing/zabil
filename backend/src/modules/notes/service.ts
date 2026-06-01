@@ -14,6 +14,21 @@ import {
   notifyNoteUpdated,
   notifyChecklistCompleted,
 } from '../notifications/service.js'
+import { ensureBlocksMigrated } from './block-service.js'
+import { extractMentionedUsernames, extractTextFromDelta, createMentions } from '../mentions/service.js'
+
+function normalizeDelta(content: string): string {
+  if (!content || content === '') return '[{"insert":"\\n"}]'
+  try {
+    const parsed = JSON.parse(content)
+    if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].insert !== undefined) {
+      return content
+    }
+  } catch {
+    // not JSON — treat as plain text
+  }
+  return JSON.stringify([{ insert: content + '\n' }])
+}
 
 async function ensurePersonalGroup(app: FastifyInstance, userId: string) {
   const existing = await app.prisma.group.findFirst({
@@ -79,6 +94,7 @@ export async function getNotes(app: FastifyInstance, userId: string, query: Note
       creator: { select: { id: true, username: true, displayName: true, avatarUrl: true } },
       checklistItems: { orderBy: { position: 'asc' } },
       images: true,
+      blocks: { orderBy: { position: 'asc' } },
       group: { select: { id: true, title: true, isPersonal: true } },
     },
     orderBy: [{ pinned: 'desc' }, { updatedAt: 'desc' }],
@@ -87,12 +103,15 @@ export async function getNotes(app: FastifyInstance, userId: string, query: Note
 }
 
 export async function getNoteById(app: FastifyInstance, noteId: string, userId: string) {
+  await ensureBlocksMigrated(app, noteId)
+
   const note = await app.prisma.note.findFirst({
     where: { id: noteId, deletedAt: null },
     include: {
       creator: { select: { id: true, username: true, displayName: true, avatarUrl: true } },
       checklistItems: { orderBy: { position: 'asc' } },
       images: true,
+      blocks: { orderBy: { position: 'asc' } },
       group: { select: { id: true, title: true, isPersonal: true } },
     },
   })
@@ -132,13 +151,22 @@ export async function createNote(app: FastifyInstance, userId: string, dto: Crea
       groupId: targetGroupId,
       createdBy: userId,
       title: dto.title,
-      content: dto.content,
+      content: normalizeDelta(dto.content),
       colorLabel: dto.colorLabel ?? null,
+      migrated: true,
+      blocks: {
+        create: {
+          type: 'text',
+          content: JSON.stringify({ delta: JSON.parse(normalizeDelta(dto.content)) }),
+          position: 0,
+        },
+      },
     },
     include: {
       creator: { select: { id: true, username: true, displayName: true, avatarUrl: true } },
       checklistItems: true,
       images: true,
+      blocks: { orderBy: { position: 'asc' } },
       group: { select: { id: true, title: true, isPersonal: true } },
     },
   })
@@ -160,13 +188,19 @@ export async function updateNote(app: FastifyInstance, noteId: string, userId: s
   const isMember = await requireGroupMember(app, userId, note.groupId)
   if (!isMember) throw errors.forbidden()
 
+  const data = { ...dto } as Record<string, unknown>
+  if (typeof dto.content === 'string') {
+    data.content = normalizeDelta(dto.content)
+  }
+
   const updated = await app.prisma.note.update({
     where: { id: noteId },
-    data: dto,
+    data,
     include: {
       creator: { select: { id: true, username: true, displayName: true, avatarUrl: true } },
       checklistItems: { orderBy: { position: 'asc' } },
       images: true,
+      blocks: { orderBy: { position: 'asc' } },
       group: { select: { id: true, title: true, isPersonal: true } },
     },
   })
@@ -183,6 +217,23 @@ export async function updateNote(app: FastifyInstance, noteId: string, userId: s
       },
       updated.group.title,
     ).catch((e: unknown) => console.error('[notify] notifyNoteUpdated(note):', e))
+  }
+
+  // Упоминания @username в тексте заметки (dedup: не повторяем если уже упомянут)
+  if (typeof dto.content === 'string' && !updated.group.isPersonal) {
+    const plainText = extractTextFromDelta(data.content as string)
+    const usernames = extractMentionedUsernames(plainText)
+    if (usernames.length > 0) {
+      createMentions({
+        app,
+        mentionerUserId: userId,
+        usernames,
+        context: 'note',
+        groupId: updated.groupId,
+        noteId: updated.id,
+        dedupByNote: true,
+      }).catch((e: unknown) => console.error('[mentions] note:', e))
+    }
   }
 
   return updated
@@ -232,6 +283,7 @@ export async function moveNote(app: FastifyInstance, noteId: string, userId: str
         creator: { select: { id: true, username: true, displayName: true, avatarUrl: true } },
         checklistItems: { orderBy: { position: 'asc' } },
         images: true,
+        blocks: { orderBy: { position: 'asc' } },
         group: { select: { id: true, title: true, isPersonal: true } },
       },
     })
@@ -244,6 +296,7 @@ export async function moveNote(app: FastifyInstance, noteId: string, userId: str
       creator: { select: { id: true, username: true, displayName: true, avatarUrl: true } },
       checklistItems: { orderBy: { position: 'asc' } },
       images: true,
+      blocks: { orderBy: { position: 'asc' } },
       group: { select: { id: true, title: true, isPersonal: true } },
     },
   })

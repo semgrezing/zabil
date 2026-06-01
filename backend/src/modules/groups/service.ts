@@ -7,6 +7,10 @@ import { CreateGroupDto, UpdateGroupDto } from './schema.js'
 import { errors } from '../../utils/errors.js'
 import { env } from '../../config/env.js'
 import {
+  notifyGroupDeleted,
+  notifyGroupMemberRemoved,
+} from '../notifications/service.js'
+import {
   ALLOWED_MIME_TYPES,
   ALLOWED_EXTENSIONS,
   checkMagicBytes,
@@ -26,6 +30,75 @@ async function requireManageRole(app: FastifyInstance, groupId: string, userId: 
   if (!member) throw errors.forbidden()
   if (!['owner', 'admin'].includes(member.role)) throw errors.forbidden()
   return member.role
+}
+
+const groupUserSelect = {
+  id: true,
+  username: true,
+  displayName: true,
+  avatarUrl: true,
+  lastSeenAt: true,
+} as const
+
+const groupInclude = {
+  members: {
+    include: {
+      user: {
+        select: groupUserSelect,
+      },
+    },
+    orderBy: { joinedAt: 'asc' as const },
+  },
+  chatMessages: {
+    where: { deletedAt: null },
+    orderBy: { createdAt: 'desc' as const },
+    take: 1,
+    include: {
+      sender: {
+        select: groupUserSelect,
+      },
+    },
+  },
+} as const
+
+function buildGroupPayload(group: any) {
+  const members = (group.members ?? []).map((m: any) => ({
+    id: m.id,
+    role: m.role,
+    user: {
+      id: m.user?.id ?? '',
+      username: m.user?.username ?? '',
+      displayName: m.user?.displayName ?? null,
+      avatarUrl: m.user?.avatarUrl ?? null,
+      lastSeenAt: m.user?.lastSeenAt ? m.user.lastSeenAt.toISOString() : null,
+    },
+  }))
+
+  const last = group.chatMessages?.[0]
+  const lastMessage = last
+    ? {
+        id: last.id,
+        body: last.body,
+        imageUrl: last.imageUrl ?? null,
+        createdAt: last.createdAt.toISOString(),
+        sender: {
+          id: last.sender?.id ?? '',
+          username: last.sender?.username ?? '',
+          displayName: last.sender?.displayName ?? null,
+          avatarUrl: last.sender?.avatarUrl ?? null,
+        },
+      }
+    : null
+
+  return {
+    id: group.id,
+    title: group.title,
+    avatarUrl: group.avatarUrl ?? null,
+    isPersonal: Boolean(group.isPersonal),
+    members,
+    lastMessage,
+    unreadCount: 0,
+  }
 }
 
 export async function ensurePersonalGroup(app: FastifyInstance, userId: string) {
@@ -86,7 +159,27 @@ export async function getUserGroups(app: FastifyInstance, userId: string) {
     orderBy: { joinedAt: 'desc' },
   })
 
-  return Promise.all(members.map((m) => buildGroupPayload(m.group)))
+  const groupIds = members.map((m) => m.group.id)
+
+  const unreadCounts = groupIds.length > 0
+    ? await app.prisma.groupChatMessage.groupBy({
+        by: ['groupId'],
+        where: {
+          groupId: { in: groupIds },
+          senderId: { not: userId },
+          deletedAt: null,
+          reads: { none: { userId } },
+        },
+        _count: { id: true },
+      })
+    : []
+
+  const unreadMap = new Map(unreadCounts.map((r) => [r.groupId, r._count.id]))
+
+  return members.map((m) => ({
+    ...buildGroupPayload(m.group),
+    unreadCount: unreadMap.get(m.group.id) ?? 0,
+  }))
 }
 
 export async function getPersonalContext(app: FastifyInstance, userId: string) {

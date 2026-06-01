@@ -152,11 +152,10 @@ class _ActivityFeedScreenState extends ConsumerState<ActivityFeedScreen> {
     switch (item.type) {
       case ActivityType.noteCreated:
       case ActivityType.noteUpdated:
-        context.push('/notes/${item.targetId}');
+        context.go('/notes/${item.targetId}');
       case ActivityType.messageSent:
-        context.push(
-          '/chats/group/${item.groupId}',
-          extra: {'title': item.groupTitle},
+        context.go(
+          '/chats/group/${item.groupId}?title=${Uri.encodeComponent(item.groupTitle)}',
         );
       case ActivityType.memberJoined:
         break;

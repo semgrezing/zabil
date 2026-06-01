@@ -1,5 +1,5 @@
 import 'dart:io';
-import 'dart:ui';
+import 'frosted_bar.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -13,6 +13,8 @@ import '../../features/groups/providers/groups_provider.dart';
 import '../../features/notes/providers/notes_provider.dart';
 import '../../features/updates/providers/update_provider.dart';
 import '../../features/invitations/providers/invitations_provider.dart';
+import '../../features/mentions/models/mention_model.dart';
+import '../../features/mentions/providers/mentions_provider.dart';
 import '../../core/realtime/ws_client.dart';
 import '../theme/app_colors.dart';
 
@@ -36,6 +38,8 @@ class _MainShellState extends ConsumerState<MainShell> {
     _TabItem(icon: SolarIconsOutline.settings, activeIcon: SolarIconsBold.settings, label: 'Настройки', path: '/settings'),
   ];
 
+  StreamSubscription? _mentionSub;
+
   @override
   void initState() {
     super.initState();
@@ -45,12 +49,37 @@ class _MainShellState extends ConsumerState<MainShell> {
         .where((e) => e is PushNotificationEvent)
         .cast<PushNotificationEvent>()
         .listen(_handlePushToast);
+    _mentionSub = ref
+        .read(wsClientProvider)
+        .events
+        .where((e) => e is MentionEvent)
+        .cast<MentionEvent>()
+        .listen(_handleMentionEvent);
   }
 
   @override
   void dispose() {
     _pushSub?.cancel();
+    _mentionSub?.cancel();
     super.dispose();
+  }
+
+  Future<void> _openExternalDownload(String rawUrl) async {
+    if (!mounted) return;
+    final uri = Uri.tryParse(rawUrl);
+    if (uri == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Некорректная ссылка на обновление')),
+      );
+      return;
+    }
+
+    final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!launched && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Не удалось открыть страницу скачивания')),
+      );
+    }
   }
 
   void _handlePushToast(PushNotificationEvent event) {
@@ -97,13 +126,13 @@ class _MainShellState extends ConsumerState<MainShell> {
           SnackBar(
             content: Text(event.body.isNotEmpty
                 ? event.body
-                : 'Доступна версия ${event.data['version'] ?? ''}'),
+                : '🎉 Доступна версия ${event.data['version'] ?? ''}'),
             duration: const Duration(seconds: 15),
             action: downloadUrl == null || downloadUrl.isEmpty
                 ? null
                 : SnackBarAction(
                     label: 'Скачать',
-                    onPressed: () => launchUrl(Uri.parse(downloadUrl)),
+                    onPressed: () => _openExternalDownload(downloadUrl),
                   ),
           ),
         );
@@ -123,6 +152,31 @@ class _MainShellState extends ConsumerState<MainShell> {
     return personalUnread + groupUnread;
   }
 
+  int _pendingInvitationsCount(WidgetRef ref) {
+    return (ref.watch(invitationsProvider).valueOrNull ?? []).length;
+  }
+
+  int _unreadMentionsCount(WidgetRef ref) {
+    return (ref.watch(mentionsProvider).valueOrNull ?? [])
+        .where((m) => !m.read)
+        .length;
+  }
+
+  void _handleMentionEvent(MentionEvent event) {
+    if (!mounted) return;
+    try {
+      final mention = MentionModel.fromJson(event.data);
+      ref.read(mentionsProvider.notifier).addFromWs(mention);
+    } catch (_) {
+      ref.invalidate(mentionsProvider);
+    }
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Вас упомянули')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final updateInfo = ref.watch(updateCheckProvider).valueOrNull;
@@ -137,11 +191,11 @@ class _MainShellState extends ConsumerState<MainShell> {
         if (!context.mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Доступна версия ${updateInfo.latestVersion}'),
+            content: Text('🎉 Доступна версия ${updateInfo.latestVersion}'),
             duration: const Duration(seconds: 15),
             action: SnackBarAction(
               label: 'Скачать',
-              onPressed: () => launchUrl(Uri.parse(updateInfo.downloadUrl!)),
+              onPressed: () => _openExternalDownload(updateInfo.downloadUrl!),
             ),
           ),
         );
@@ -170,56 +224,48 @@ class _MainShellState extends ConsumerState<MainShell> {
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(16),
-              child: BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: AppColors.bg2.withValues(alpha: 0.75),
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(
-                      color: Colors.white.withValues(alpha: 0.06),
-                      width: 1,
-                    ),
-                  ),
-                  child: Row(
+            FrostedBar(
+                child: Row(
                     mainAxisSize: MainAxisSize.min,
-                    children: _tabs.asMap().entries.map((entry) {
-                      final index = entry.key;
-                      final tab = entry.value;
-                      final isActive = index == (currentIndex < 0 ? 0 : currentIndex);
-                      // Compute unread badge for Chats tab (index 1)
-                      final badgeCount = index == 1 ? _totalUnread(ref) : 0;
-                      return SizedBox(
-                        width: 56,
-                        height: 48,
-                        child: IconButton(
-                          icon: Badge(
-                            isLabelVisible: badgeCount > 0,
-                            label: Text(
-                              badgeCount > 99 ? '99+' : badgeCount.toString(),
-                              style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w700),
+                    children: [
+                      ..._tabs.asMap().entries.map((entry) {
+                        final index = entry.key;
+                        final tab = entry.value;
+                        final isActive = index == (currentIndex < 0 ? 0 : currentIndex);
+                        final badgeCount = index == 1 ? _totalUnread(ref) : 0;
+                        return SizedBox(
+                          width: 56,
+                          height: 48,
+                          child: IconButton(
+                            icon: Badge(
+                              isLabelVisible: badgeCount > 0,
+                              label: Text(
+                                badgeCount > 99 ? '99+' : badgeCount.toString(),
+                                style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w700),
+                              ),
+                              child: Icon(
+                                isActive ? tab.activeIcon : tab.icon,
+                                size: 22,
+                              ),
                             ),
-                            child: Icon(
-                              isActive ? tab.activeIcon : tab.icon,
-                              size: 22,
-                            ),
+                            color: isActive ? AppColors.white : AppColors.fgSoft,
+                            tooltip: tab.label,
+                            onPressed: () {
+                              if (index != currentIndex) {
+                                context.go(tab.path);
+                              }
+                            },
                           ),
-                          color: isActive ? AppColors.white : AppColors.fgSoft,
-                          tooltip: tab.label,
-                          onPressed: () {
-                            if (index != currentIndex) {
-                              context.go(tab.path);
-                            }
-                          },
-                        ),
-                      );
-                    }).toList(),
+                        );
+                      }),
+                      _InvitationsNavButton(
+                        count: _pendingInvitationsCount(ref) + _unreadMentionsCount(ref),
+                        isActive: location.startsWith('/invitations'),
+                        onPressed: () => context.go('/invitations'),
+                      ),
+                    ],
                   ),
                 ),
-              ),
-            ),
             if (showFab) ...[
               const SizedBox(width: 12),
               _NoteFab(),
@@ -476,6 +522,45 @@ class _NoteLocationOption extends StatelessWidget {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _InvitationsNavButton extends StatelessWidget {
+  final int count;
+  final bool isActive;
+  final VoidCallback onPressed;
+
+  const _InvitationsNavButton({
+    required this.count,
+    required this.isActive,
+    required this.onPressed,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (count == 0 && !isActive) return const SizedBox.shrink();
+    return SizedBox(
+      width: 56,
+      height: 48,
+      child: IconButton(
+        icon: Badge(
+          isLabelVisible: count > 0,
+          label: Text(
+            count > 99 ? '99+' : count.toString(),
+            style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w700),
+          ),
+          child: Icon(
+            isActive
+                ? SolarIconsBold.letterOpened
+                : SolarIconsOutline.letterOpened,
+            size: 22,
+          ),
+        ),
+        color: isActive ? AppColors.white : AppColors.fgSoft,
+        tooltip: 'Приглашения',
+        onPressed: onPressed,
       ),
     );
   }

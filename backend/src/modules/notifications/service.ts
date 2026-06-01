@@ -382,10 +382,10 @@ export async function notifyAppRelease(
   await Promise.all(
     users.map((user) =>
       sendPush(app, user.id, {
-        title: `Доступна версия ${payload.version}`,
+        title: `🎉 Доступна версия ${payload.version}`,
         body: payload.notes?.trim().length != null && payload.notes!.trim().length > 0
             ? payload.notes!.trim()
-            : 'Доступно новое обновление приложения',
+            : '🎉 Доступно новое обновление приложения',
         data: {
           type: 'app_release',
           version: payload.version,

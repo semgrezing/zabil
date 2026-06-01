@@ -122,6 +122,11 @@ class NoteTypingEvent extends WsEvent {
   const NoteTypingEvent({required this.noteId, required this.userId});
 }
 
+class MentionEvent extends WsEvent {
+  final Map<String, dynamic> data;
+  const MentionEvent(this.data);
+}
+
 /// WebSocket-клиент с auto-reconnect.
 ///
 /// Подключается на auth (есть валидный access token), переподключается при
@@ -271,6 +276,9 @@ class WsClient {
               ? DateTime.tryParse(json['lastSeenAt'].toString())
               : null,
         ));
+      } else if (type == 'mention') {
+        final data = json['data'] as Map<String, dynamic>? ?? {};
+        _eventsController.add(MentionEvent(data));
       }
     } catch (e) {
       debugPrint('[ws] parse error: $e');

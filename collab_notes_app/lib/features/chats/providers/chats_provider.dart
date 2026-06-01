@@ -168,13 +168,13 @@ class GroupChatKey {
   int get hashCode => Object.hash(groupId, noteId);
 }
 
-final groupChatProvider = AsyncNotifierProvider.family<GroupChatNotifier,
-    List<GroupChatMessage>, GroupChatKey>(
+final groupChatProvider = AsyncNotifierProvider.autoDispose
+    .family<GroupChatNotifier, List<GroupChatMessage>, GroupChatKey>(
   GroupChatNotifier.new,
 );
 
 class GroupChatNotifier
-    extends FamilyAsyncNotifier<List<GroupChatMessage>, GroupChatKey> {
+    extends AutoDisposeFamilyAsyncNotifier<List<GroupChatMessage>, GroupChatKey> {
   ChatsService get _service => ref.read(chatsServiceProvider);
   StreamSubscription? _wsSub;
 
@@ -204,6 +204,28 @@ class GroupChatNotifier
         state = state.whenData((list) => list
             .map((m) => m.id == deletedId ? m.asDeleted() : m)
             .toList());
+      } else if (event is GroupReadReceiptEvent) {
+        if (event.groupId != arg.groupId || event.messageIds.isEmpty) return;
+        final readIds = event.messageIds.toSet();
+        final readerId = event.readerId;
+        final myUserId = ref.read(authStateProvider).valueOrNull?.user?.id;
+        final markReadByMe = readerId == myUserId;
+
+        state = state.whenData(
+          (list) => list.map((m) {
+            if (!readIds.contains(m.id)) return m;
+            final isMyMessage = myUserId != null && m.senderId == myUserId;
+            final nextReadCount =
+                (isMyMessage && !markReadByMe && m.readCount == 0)
+                    ? 1
+                    : m.readCount;
+
+            return m.copyWith(
+              readCount: nextReadCount,
+              isReadByMe: markReadByMe ? true : m.isReadByMe,
+            );
+          }).toList(),
+        );
       }
     });
     ref.onDispose(() {
@@ -250,13 +272,13 @@ class GroupChatNotifier
 
 // ─── Personal chat (1:1) ────────────────────────────────────────────────────
 
-final personalChatProvider = AsyncNotifierProvider.family<PersonalChatNotifier,
-    List<PersonalChatMessage>, String>(
+final personalChatProvider = AsyncNotifierProvider.autoDispose
+    .family<PersonalChatNotifier, List<PersonalChatMessage>, String>(
   PersonalChatNotifier.new,
 );
 
 class PersonalChatNotifier
-    extends FamilyAsyncNotifier<List<PersonalChatMessage>, String> {
+    extends AutoDisposeFamilyAsyncNotifier<List<PersonalChatMessage>, String> {
   ChatsService get _service => ref.read(chatsServiceProvider);
   StreamSubscription? _wsSub;
   Timer? _markReadDebounce;
@@ -288,6 +310,14 @@ class PersonalChatNotifier
             _scheduleMarkRead();
           }
         } catch (_) {}
+      } else if (event is PersonalReadReceiptEvent) {
+        if (event.messageIds.isEmpty) return;
+        if (event.readerId != arg && event.peerUserId != arg) return;
+
+        final readIds = event.messageIds.toSet();
+        state = state.whenData((list) => list
+            .map((m) => readIds.contains(m.id) ? m.copyWith(readAt: event.readAt) : m)
+            .toList());
       } else if (event is MessageDeletedEvent && event.kind == 'personal') {
         final deletedId = event.messageId;
         state = state.whenData((list) => list

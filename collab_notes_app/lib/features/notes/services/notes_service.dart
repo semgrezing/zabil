@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 import '../../../core/api/api_client.dart';
 import '../../../core/config/api_endpoints.dart';
 import '../models/note_model.dart';
+import '../models/note_block_model.dart';
 
 const _unset = Object();
 
@@ -148,5 +149,43 @@ class NotesService {
 
   Future<void> deleteImage(String imageId) async {
     await _dio.delete(ApiEndpoints.deleteNoteImage(imageId));
+  }
+
+  // ── Block CRUD ──────────────────────────────────────────────────────────
+
+  Future<NoteBlockModel> createBlock(
+    String noteId, {
+    required String type,
+    required String content,
+    required int position,
+  }) async {
+    final response = await _dio.post(
+      ApiEndpoints.noteBlocks(noteId),
+      data: {'type': type, 'content': content, 'position': position},
+    );
+    return NoteBlockModel.fromJson(response.data as Map<String, dynamic>);
+  }
+
+  Future<NoteBlockModel> updateBlock(
+    String noteId,
+    String blockId, {
+    required String content,
+  }) async {
+    final response = await _dio.patch(
+      ApiEndpoints.noteBlock(noteId, blockId),
+      data: {'content': content},
+    );
+    return NoteBlockModel.fromJson(response.data as Map<String, dynamic>);
+  }
+
+  Future<void> deleteBlock(String noteId, String blockId) async {
+    await _dio.delete(ApiEndpoints.noteBlock(noteId, blockId));
+  }
+
+  Future<void> reorderBlocks(String noteId, List<String> orderedIds) async {
+    await _dio.patch(
+      ApiEndpoints.reorderNoteBlocks(noteId),
+      data: {'orderedIds': orderedIds},
+    );
   }
 }

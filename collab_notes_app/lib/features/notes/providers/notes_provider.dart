@@ -105,7 +105,7 @@ class NotesNotifier extends AsyncNotifier<List<NoteModel>> {
     if (search.isEmpty) return notes;
     return notes.where((n) {
       final title = n.title.toLowerCase();
-      final content = n.content.toLowerCase();
+      final content = NoteModel.extractPlainText(n.content).toLowerCase();
       final group = (n.groupTitle ?? '').toLowerCase();
       return title.contains(search) || content.contains(search) || group.contains(search);
     }).toList(growable: false);

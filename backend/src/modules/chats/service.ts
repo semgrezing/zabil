@@ -7,6 +7,7 @@ import {
 } from '../notifications/service.js'
 import { computeIsOnline } from '../users/service.js'
 import { isOnline, sendToUser } from './wsHub.js'
+import { extractMentionedUsernames, createMentions } from '../mentions/service.js'
 
 // ─── Group / Note chat ─────────────────────────────────────────────────────
 
@@ -135,6 +136,22 @@ export async function sendGroupMessage(
     isOnline,
   ).catch((e: unknown) => console.error('[notify] notifyNewGroupMessage:', e))
 
+  // Упоминания @username в тексте сообщения
+  if (message.body) {
+    const usernames = extractMentionedUsernames(message.body)
+    if (usernames.length > 0) {
+      createMentions({
+        app,
+        mentionerUserId: senderId,
+        usernames,
+        context: 'group_message',
+        groupId,
+        noteId: body.noteId,
+        messageId: message.id,
+      }).catch((e: unknown) => console.error('[mentions] group_message:', e))
+    }
+  }
+
   return message
 }
 
@@ -233,6 +250,20 @@ export async function sendPersonalMessage(
     sender?.username ?? 'Пользователь',
     isOnline,
   ).catch((e: unknown) => console.error('[notify] notifyNewPersonalMessage:', e))
+
+  // Упоминания @username в тексте личного сообщения
+  if (message.body) {
+    const usernames = extractMentionedUsernames(message.body)
+    if (usernames.length > 0) {
+      createMentions({
+        app,
+        mentionerUserId: senderId,
+        usernames,
+        context: 'personal_message',
+        messageId: message.id,
+      }).catch((e: unknown) => console.error('[mentions] personal_message:', e))
+    }
+  }
 
   return message
 }
@@ -399,15 +430,6 @@ export async function markPersonalRead(
   // Sender gets explicit read receipts, reader updates own devices too.
   sendToUser(otherUserId, payload)
   sendToUser(userId, payload)
-}
-
-export async function markGroupRead(
-  _app: FastifyInstance,
-  _userId: string,
-  _groupId: string,
-) {
-  // Group read receipts not yet implemented in this version
-  // TODO: implement when GroupMessageRead model is added
 }
 
 const DELETE_WINDOW_MS = 15 * 60 * 1000 // 15 minutes

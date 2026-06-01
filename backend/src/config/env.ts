@@ -20,6 +20,11 @@ const envSchema = z.object({
   PUBLIC_ORIGIN: z.string().default('https://api.achiemvemer.ru'),
   // Telegram Bot Token для OAuth верификации
   TELEGRAM_BOT_TOKEN: z.string().default(''),
+  // Telegram Login Widget 2.0 (OIDC)
+  TELEGRAM_CLIENT_ID: z.string().default(''),
+  TELEGRAM_CLIENT_SECRET: z.string().default(''),
+  // Deep link URI приложения для возврата после Telegram OAuth
+  TELEGRAM_APP_REDIRECT_URI: z.string().url().default('collabnotes://telegram-auth'),
 })
 
 const parsed = envSchema.safeParse(process.env)

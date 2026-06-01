@@ -1,8 +1,10 @@
+import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:solar_icons/solar_icons.dart';
 import '../models/note_model.dart';
+import '../models/note_block_model.dart';
 import '../screens/image_viewer_screen.dart';
 import '../../../shared/theme/app_colors.dart';
 import '../../../shared/theme/app_dimensions.dart';
@@ -41,6 +43,37 @@ class NoteCard extends StatefulWidget {
 class _NoteCardState extends State<NoteCard> {
   double _dragProgress = 0.0;
   double _dragSign = 0.0;
+
+  String _extractPreview() {
+    if (note.migrated && note.blocks.isNotEmpty) {
+      for (final block in note.blocks) {
+        if (block.type == NoteBlockType.text) {
+          final text = NoteModel.extractPlainText(
+            '${block.deltaOps}'.replaceAll(RegExp(r'^\[|\]$'), '') == '{}'
+                ? ''
+                : _deltaToJsonString(block.deltaOps),
+          );
+          if (text.isNotEmpty) return text;
+        }
+        if (block.type == NoteBlockType.checklist) {
+          final items = block.checklistItems;
+          if (items.isNotEmpty) {
+            return items.map((i) => '${i.completed ? "✓" : "○"} ${i.text}').take(3).join('\n');
+          }
+        }
+      }
+      return '';
+    }
+    return NoteModel.extractPlainText(note.content);
+  }
+
+  static String _deltaToJsonString(List<dynamic> ops) {
+    try {
+      return jsonEncode(ops);
+    } catch (_) {
+      return '';
+    }
+  }
 
   NoteModel get note => widget.note;
   VoidCallback? get onTap => widget.onTap;
@@ -242,7 +275,7 @@ class _NoteCardState extends State<NoteCard> {
                       borderRadius: BorderRadius.circular(6),
                     ),
                     child: Text(
-                      note.content,
+                      _extractPreview(),
                       maxLines: widget.compactMode ? 3 : 2,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(

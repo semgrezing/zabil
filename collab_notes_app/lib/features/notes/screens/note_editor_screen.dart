@@ -1,15 +1,22 @@
 import 'dart:async';
-import 'dart:ui';
+import 'dart:convert';
+import '../../../shared/widgets/frosted_bar.dart';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_quill/flutter_quill.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:solar_icons/solar_icons.dart';
 import '../providers/notes_provider.dart';
+import '../providers/block_editor_provider.dart';
 import '../models/note_model.dart';
+import '../models/note_block_model.dart';
+import '../widgets/blocks/block_row.dart';
+import '../widgets/blocks/insert_block_button.dart';
+import '../widgets/blocks/slash_command_overlay.dart';
 import '../../auth/providers/auth_provider.dart';
 import '../../../shared/theme/app_colors.dart';
 import '../../../shared/widgets/app_loader.dart';
@@ -19,6 +26,10 @@ import '../../../core/realtime/ws_client.dart';
 import '../../../features/groups/providers/groups_provider.dart';
 import 'image_viewer_screen.dart';
 import '../../../core/utils/error_mapper.dart';
+import 'package:intl/intl.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:path_provider/path_provider.dart';
+import 'dart:io';
 
 class NoteEditorScreen extends ConsumerStatefulWidget {
   final String? noteId;
@@ -31,9 +42,10 @@ class NoteEditorScreen extends ConsumerStatefulWidget {
 
 class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
   final _titleCtrl = TextEditingController();
-  final _contentCtrl = TextEditingController();
   final _titleFocus = FocusNode();
-  final _contentFocus = FocusNode();
+  QuillController? _quillController;
+  final _editorFocusNode = FocusNode();
+  final _editorScrollCtrl = ScrollController();
   bool _isDirty = false;
   bool _isSaving = false;
   bool _hasSavedOnce = false;
@@ -44,6 +56,7 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
   bool _showRemoteBanner = false;
   Timer? _remotePoll;
   bool _uploadingImages = false;
+  bool _showFormattingToolbar = false;
 
   // Presence & typing
   StreamSubscription? _wsSub;
@@ -147,13 +160,17 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
     _remotePoll?.cancel();
     _debounce?.cancel();
     _titleCtrl.dispose();
-    _contentCtrl.dispose();
+    _quillController?.dispose();
+    _editorFocusNode.dispose();
+    _editorScrollCtrl.dispose();
     _titleFocus.dispose();
-    _contentFocus.dispose();
     for (final ctrl in _inlineChecklistCtrls.values) {
       ctrl.dispose();
     }
     for (final node in _inlineChecklistFocusNodes.values) {
+      node.dispose();
+    }
+    for (final node in _blockFocusNodes.values) {
       node.dispose();
     }
     super.dispose();
@@ -178,13 +195,18 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
   }
 
   Widget _buildEditor(NoteModel note) {
+    if (note.migrated) return _buildBlockEditor(note);
     _hydrateControllersFromNote(note);
+
+    final bgTint = note.colorLabel != null
+        ? Color(int.parse(note.colorLabel!.replaceFirst('#', '0xFF')))
+            .withValues(alpha: 0.08)
+        : null;
 
     return PopScope(
       canPop: !_isDirty && !_isSaving,
       onPopInvokedWithResult: (didPop, _) async {
         if (didPop) return;
-        // User tried to go back while dirty or saving — save first, then pop.
         if (_isDirty) {
           _debounce?.cancel();
           await _saveNote(note.id);
@@ -194,6 +216,9 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
         }
       },
       child: Scaffold(
+        backgroundColor: bgTint != null
+            ? Color.alphaBlend(bgTint, AppColors.bg1)
+            : null,
         appBar: AppBar(
           title: _buildSaveStatus(),
           actions: [
@@ -206,15 +231,27 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
                 ),
               ),
             PopupMenuButton<String>(
-              onSelected: (value) {
+              onSelected: (value) async {
                 if (value == 'move') {
-                  _moveNote(note);
-                }
-                if (value == 'color') {
-                  _pickColor(note);
+                  await _moveNote(note);
+                } else if (value == 'color') {
+                  await _pickColor(note);
+                } else if (value == 'calendar') {
+                  await Future<void>.delayed(Duration.zero);
+                  await _showCalendarSheet(note);
                 }
               },
               itemBuilder: (_) => const [
+                PopupMenuItem(
+                  value: 'calendar',
+                  child: Row(
+                    children: [
+                      Icon(SolarIconsOutline.calendar),
+                      SizedBox(width: 8),
+                      Text('Событие в календаре'),
+                    ],
+                  ),
+                ),
                 PopupMenuItem(
                   value: 'move',
                   child: Row(
@@ -248,7 +285,6 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
                 children: [
             if (_showRemoteBanner && _pendingRemoteNote != null)
               _buildRemoteUpdateBanner(note.id),
-            // Presence bar (#2) + Typing indicator (#6)
             if (_viewers.isNotEmpty || _typingUserId != null) ...[
               if (_viewers.isNotEmpty)
                 NotePresenceBar(viewers: _viewers),
@@ -314,25 +350,21 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
             ],
             const SizedBox(height: 8),
 
-            // Content
-            TextField(
-              controller: _contentCtrl,
-              focusNode: _contentFocus,
-              maxLines: null,
-              keyboardType: TextInputType.multiline,
-              decoration: const InputDecoration(
-                hintText: 'Начните писать...',
-                border: InputBorder.none,
-                enabledBorder: InputBorder.none,
-                focusedBorder: InputBorder.none,
-                contentPadding: EdgeInsets.zero,
-                filled: false,
+            // Rich text editor
+            if (_quillController != null)
+              QuillEditor.basic(
+                controller: _quillController!,
+                focusNode: _editorFocusNode,
+                scrollController: _editorScrollCtrl,
+                config: QuillEditorConfig(
+                  placeholder: 'Начните писать...',
+                  padding: EdgeInsets.zero,
+                  autoFocus: false,
+                  expands: false,
+                  scrollable: false,
+                  customStyles: _buildQuillDarkStyles(context),
+                ),
               ),
-              onChanged: (_) {
-                _onEdited(note.id);
-                _emitTyping(note.id);
-              },
-            ),
             const Divider(height: 32),
 
             // Checklist sections
@@ -429,6 +461,428 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
     );
   }
 
+  // ── Block-based editor ──────────────────────────────────────────────────
+
+  final Map<String, FocusNode> _blockFocusNodes = {};
+
+  FocusNode _focusNodeForBlock(String blockId) {
+    return _blockFocusNodes.putIfAbsent(blockId, () {
+      final node = FocusNode();
+      node.addListener(() {
+        if (node.hasFocus) {
+          ref.read(focusedBlockIdProvider.notifier).state = blockId;
+        }
+      });
+      return node;
+    });
+  }
+
+  Widget _buildBlockEditor(NoteModel note) {
+    _hydrateTitleFromNote(note);
+
+    final blocksAsync = ref.watch(blockEditorProvider(note.id));
+    final focusedId = ref.watch(focusedBlockIdProvider);
+
+    final bgTint = note.colorLabel != null
+        ? Color(int.parse(note.colorLabel!.replaceFirst('#', '0xFF')))
+            .withValues(alpha: 0.08)
+        : null;
+
+    return PopScope(
+      canPop: true,
+      onPopInvokedWithResult: (didPop, _) async {
+        if (!didPop) return;
+        final title = _titleCtrl.text.trim();
+        if (title.isNotEmpty && title != note.title) {
+          await ref.read(notesProvider.notifier).updateNote(note.id, title: title);
+        }
+        await ref.read(blockEditorProvider(note.id).notifier).flushAll();
+      },
+      child: Scaffold(
+        backgroundColor: bgTint != null
+            ? Color.alphaBlend(bgTint, AppColors.bg1)
+            : null,
+        appBar: AppBar(
+          title: _buildSaveStatus(),
+          actions: [
+            if (!note.isPersonal)
+              IconButton(
+                icon: const Icon(SolarIconsOutline.chatRound),
+                tooltip: 'Чат заметки',
+                onPressed: () => context.push(
+                  '/chats/note/${note.id}?groupId=${note.groupId}&title=${Uri.encodeComponent(note.title)}&groupTitle=${Uri.encodeComponent(note.groupTitle ?? 'Группа')}',
+                ),
+              ),
+            PopupMenuButton<String>(
+              onSelected: (value) async {
+                if (value == 'move') {
+                  await _moveNote(note);
+                } else if (value == 'color') {
+                  await _pickColor(note);
+                }
+              },
+              itemBuilder: (_) => const [
+                PopupMenuItem(
+                  value: 'move',
+                  child: Row(
+                    children: [
+                      Icon(Icons.swap_horiz),
+                      SizedBox(width: 8),
+                      Text('Переместить'),
+                    ],
+                  ),
+                ),
+                PopupMenuItem(
+                  value: 'color',
+                  child: Row(
+                    children: [
+                      Icon(Icons.palette_outlined),
+                      SizedBox(width: 8),
+                      Text('Цветовая метка'),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+        body: Stack(
+          children: [
+            blocksAsync.when(
+              loading: () => const AppLoader(),
+              error: (err, _) => Center(child: Text(mapError(err))),
+              data: (blocks) => _buildBlockList(note, blocks, focusedId),
+            ),
+            _buildBlockFloatingBar(note),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBlockList(NoteModel note, List<NoteBlockModel> blocks, String? focusedId) {
+    final itemCount = blocks.length * 2 + 1;
+
+    return ReorderableListView.builder(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 132),
+      buildDefaultDragHandles: false,
+      onReorder: (oldIndex, newIndex) {
+        if (newIndex > oldIndex) newIndex--;
+        ref.read(blockEditorProvider(note.id).notifier).reorderBlocks(oldIndex, newIndex);
+      },
+      header: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (_showRemoteBanner && _pendingRemoteNote != null)
+            _buildRemoteUpdateBanner(note.id),
+          if (_viewers.isNotEmpty)
+            NotePresenceBar(viewers: _viewers),
+          if (_typingUserId != null)
+            const Padding(
+              padding: EdgeInsets.only(top: 4, bottom: 4),
+              child: Row(
+                children: [
+                  TypingIndicator(),
+                  SizedBox(width: 6),
+                  Text('печатает...', style: TextStyle(fontSize: 12, color: AppColors.fgSoft)),
+                ],
+              ),
+            ),
+          if (_viewers.isNotEmpty || _typingUserId != null)
+            const SizedBox(height: 8),
+          TextField(
+            controller: _titleCtrl,
+            focusNode: _titleFocus,
+            style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700),
+            decoration: const InputDecoration(
+              hintText: 'Заголовок',
+              border: InputBorder.none,
+              enabledBorder: InputBorder.none,
+              focusedBorder: InputBorder.none,
+              contentPadding: EdgeInsets.zero,
+              filled: false,
+            ),
+            onChanged: (_) {
+              _onEdited(note.id);
+              _emitTyping(note.id);
+            },
+          ),
+          if (note.colorLabel != null) ...[
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                Container(
+                  width: 10,
+                  height: 10,
+                  decoration: BoxDecoration(
+                    color: Color(int.parse(note.colorLabel!.replaceFirst('#', '0xFF'))),
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text('Цветовая метка', style: Theme.of(context).textTheme.bodySmall),
+              ],
+            ),
+          ],
+          const SizedBox(height: 12),
+          InsertBlockButton(
+            onInsert: (type) => _insertBlockAt(note.id, type, 0),
+          ),
+        ],
+      ),
+      itemCount: blocks.length,
+      itemBuilder: (context, index) {
+        final block = blocks[index];
+        return Column(
+          key: ValueKey(block.id),
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            BlockRow(
+              block: block,
+              focusNode: _focusNodeForBlock(block.id),
+              isFocused: focusedId == block.id,
+              onContentChanged: (content) {
+                ref.read(blockEditorProvider(note.id).notifier).markBlockDirty(block.id, content);
+              },
+              onDelete: () {
+                ref.read(blockEditorProvider(note.id).notifier).deleteBlock(block.id);
+              },
+              onSlashTyped: () => _showSlashMenu(note.id, block),
+              onImageTap: block.type == NoteBlockType.image && block.imageData != null
+                  ? () {
+                      final data = block.imageData!;
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => ImageViewerScreen(
+                            noteId: note.id,
+                            images: [NoteImage(
+                              id: data.imageId,
+                              noteId: note.id,
+                              filename: data.filename,
+                              path: data.path,
+                            )],
+                            initialIndex: 0,
+                          ),
+                        ),
+                      );
+                    }
+                  : null,
+            ),
+            InsertBlockButton(
+              onInsert: (type) => _insertBlockAt(note.id, type, index + 1),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _insertBlockAt(String noteId, NoteBlockType type, int position) async {
+    if (type == NoteBlockType.image) {
+      await _pickAndUploadImageBlock(noteId, position);
+      return;
+    }
+    final block = await ref.read(blockEditorProvider(noteId).notifier).insertBlock(type, position);
+    if (block != null && block.type == NoteBlockType.text) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _focusNodeForBlock(block.id).requestFocus();
+      });
+    }
+  }
+
+  Future<void> _pickAndUploadImageBlock(String noteId, int position) async {
+    final picker = ImagePicker();
+    final images = await picker.pickMultiImage(
+      imageQuality: 65,
+      maxWidth: 2048,
+      maxHeight: 2048,
+    );
+    if (images.isEmpty) return;
+
+    final service = ref.read(notesServiceProvider);
+    for (final img in images) {
+      try {
+        final uploaded = await service.uploadImage(noteId, img.path);
+        final content = jsonEncode({
+          'imageId': uploaded.id,
+          'filename': uploaded.filename,
+          'path': uploaded.path,
+        });
+        await ref.read(blockEditorProvider(noteId).notifier).insertBlock(
+          NoteBlockType.image,
+          position,
+          content: content,
+        );
+        position++;
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Не удалось загрузить: ${mapError(e)}')),
+          );
+        }
+      }
+    }
+  }
+
+  void _showSlashMenu(String noteId, NoteBlockModel block) {
+    final blocks = ref.read(blockEditorProvider(noteId)).valueOrNull ?? [];
+    final blockIndex = blocks.indexWhere((b) => b.id == block.id);
+    if (blockIndex == -1) return;
+
+    showModalBottomSheet<NoteBlockType>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Align(
+        alignment: Alignment.bottomCenter,
+        child: Padding(
+          padding: const EdgeInsets.only(bottom: 16, left: 24, right: 24),
+          child: SlashCommandMenu(
+            onSelect: (type) => Navigator.pop(ctx, type),
+          ),
+        ),
+      ),
+    ).then((type) {
+      if (type == null) return;
+      // Remove the "/" from the text block
+      final focusNode = _blockFocusNodes[block.id];
+      // Insert block after current
+      _insertBlockAt(noteId, type, blockIndex + 1);
+    });
+  }
+
+  Widget _buildBlockFloatingBar(NoteModel note) {
+    final media = MediaQuery.of(context);
+    final keyboard = media.viewInsets.bottom;
+    final bottomOffset = keyboard > 0 ? keyboard + 12 : media.padding.bottom + 8;
+
+    return Positioned(
+      left: 12,
+      right: 12,
+      bottom: 0,
+      child: AnimatedPadding(
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOut,
+        padding: EdgeInsets.only(bottom: bottomOffset),
+        child: FrostedBar(
+          child: _showFormattingToolbar
+              ? _buildFormattingToolbar()
+              : Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    _EditorBarAction(
+                      icon: SolarIconsOutline.checkSquare,
+                      label: 'Чеклист',
+                      enabled: true,
+                      onTap: () {
+                        final blocks = ref.read(blockEditorProvider(note.id)).valueOrNull ?? [];
+                        final focusedId = ref.read(focusedBlockIdProvider);
+                        final idx = blocks.indexWhere((b) => b.id == focusedId);
+                        final pos = idx >= 0 ? idx + 1 : blocks.length;
+                        _insertBlockAt(note.id, NoteBlockType.checklist, pos);
+                      },
+                    ),
+                    _EditorBarAction(
+                      icon: Icons.text_format_rounded,
+                      label: 'Формат',
+                      enabled: true,
+                      onTap: () => setState(() => _showFormattingToolbar = true),
+                    ),
+                    _EditorBarAction(
+                      icon: SolarIconsOutline.gallery,
+                      label: 'Фото',
+                      enabled: true,
+                      onTap: () {
+                        final blocks = ref.read(blockEditorProvider(note.id)).valueOrNull ?? [];
+                        final focusedId = ref.read(focusedBlockIdProvider);
+                        final idx = blocks.indexWhere((b) => b.id == focusedId);
+                        final pos = idx >= 0 ? idx + 1 : blocks.length;
+                        _pickAndUploadImageBlock(note.id, pos);
+                      },
+                    ),
+                  ],
+                ),
+        ),
+      ),
+    );
+  }
+
+  DefaultStyles _buildQuillDarkStyles(BuildContext context) {
+    const white = AppColors.white;
+    const soft = AppColors.fgSoft;
+    const noSpacing = VerticalSpacing(0, 0);
+    const blockSpacing = VerticalSpacing(8, 0);
+    const hSpacing = HorizontalSpacing(0, 0);
+
+    return DefaultStyles(
+      h1: DefaultTextBlockStyle(
+        TextStyle(fontSize: 26, fontWeight: FontWeight.w700, color: white, height: 1.3),
+        hSpacing, blockSpacing, noSpacing, null,
+      ),
+      h2: DefaultTextBlockStyle(
+        TextStyle(fontSize: 22, fontWeight: FontWeight.w600, color: white, height: 1.3),
+        hSpacing, blockSpacing, noSpacing, null,
+      ),
+      h3: DefaultTextBlockStyle(
+        TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: white, height: 1.3),
+        hSpacing, blockSpacing, noSpacing, null,
+      ),
+      paragraph: DefaultTextBlockStyle(
+        TextStyle(fontSize: 15, color: white, height: 1.5),
+        hSpacing, noSpacing, noSpacing, null,
+      ),
+      bold: const TextStyle(fontWeight: FontWeight.w700),
+      italic: const TextStyle(fontStyle: FontStyle.italic),
+      underline: const TextStyle(decoration: TextDecoration.underline),
+      strikeThrough: const TextStyle(decoration: TextDecoration.lineThrough),
+      link: TextStyle(
+        color: Colors.lightBlueAccent,
+        decoration: TextDecoration.underline,
+      ),
+      placeHolder: DefaultTextBlockStyle(
+        TextStyle(fontSize: 15, color: soft, height: 1.5),
+        hSpacing, noSpacing, noSpacing, null,
+      ),
+      code: DefaultTextBlockStyle(
+        TextStyle(
+          fontSize: 13,
+          color: white,
+          fontFamily: 'monospace',
+          height: 1.4,
+        ),
+        hSpacing,
+        blockSpacing,
+        noSpacing,
+        BoxDecoration(
+          color: AppColors.bg3.withValues(alpha: 0.5),
+          borderRadius: BorderRadius.circular(4),
+        ),
+      ),
+      quote: DefaultTextBlockStyle(
+        TextStyle(fontSize: 15, color: soft, fontStyle: FontStyle.italic, height: 1.5),
+        hSpacing,
+        blockSpacing,
+        noSpacing,
+        BoxDecoration(
+          border: Border(
+            left: BorderSide(color: soft.withValues(alpha: 0.4), width: 3),
+          ),
+        ),
+      ),
+      lists: DefaultListBlockStyle(
+        TextStyle(fontSize: 15, color: white, height: 1.5),
+        hSpacing, blockSpacing, noSpacing, null, null,
+      ),
+      inlineCode: InlineCodeStyle(
+        style: TextStyle(
+          fontSize: 13,
+          color: white,
+          fontFamily: 'monospace',
+        ),
+        backgroundColor: AppColors.bg3.withValues(alpha: 0.5),
+      ),
+    );
+  }
+
   Widget _buildFloatingBar(NoteModel note) {
     final media = MediaQuery.of(context);
     final keyboard = media.viewInsets.bottom;
@@ -442,45 +896,168 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
         duration: const Duration(milliseconds: 180),
         curve: Curves.easeOut,
         padding: EdgeInsets.only(bottom: bottomOffset),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(16),
-          child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-            child: Container(
-              decoration: BoxDecoration(
-                color: AppColors.bg2.withValues(alpha: 0.75),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(
-                  color: Colors.white.withValues(alpha: 0.06),
-                  width: 1,
-                ),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceAround,
-                children: [
-                  _EditorBarAction(
-                    icon: SolarIconsOutline.checkCircle,
-                    label: 'Пункт',
-                    enabled: !_isSaving,
-                    onTap: () => _onChecklistActionTap(note),
-                  ),
-                  _EditorBarAction(
-                    icon: Icons.short_text_rounded,
-                    label: 'Текст',
-                    enabled: !_isSaving,
-                    onTap: () => _insertTextBlock(note.id),
-                  ),
-                  _EditorBarAction(
-                    icon: SolarIconsOutline.gallery,
-                    label: 'Изображение',
-                    enabled: !_uploadingImages,
-                    onTap: () => _pickAndUploadImages(note.id),
-                  ),
-                ],
-              ),
+        child: FrostedBar(
+          child: _showFormattingToolbar
+              ? _buildFormattingToolbar()
+              : _buildActionBar(note),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildActionBar(NoteModel note) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceAround,
+      children: [
+        _EditorBarAction(
+          icon: SolarIconsOutline.checkCircle,
+          label: 'Пункт',
+          enabled: !_isSaving,
+          onTap: () => _onChecklistActionTap(note),
+        ),
+        _EditorBarAction(
+          icon: Icons.text_format_rounded,
+          label: 'Формат',
+          enabled: !_isSaving && _quillController != null,
+          onTap: () => setState(() => _showFormattingToolbar = true),
+        ),
+        _EditorBarAction(
+          icon: SolarIconsOutline.gallery,
+          label: 'Фото',
+          enabled: !_uploadingImages,
+          onTap: () => _pickAndUploadImages(note.id),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildFormattingToolbar() {
+    if (_quillController == null) return const SizedBox.shrink();
+
+    return SizedBox(
+      height: 48,
+      child: Row(
+        children: [
+          Expanded(
+            child: ListenableBuilder(
+              listenable: _quillController!,
+              builder: (context, _) {
+                final style = _quillController!.getSelectionStyle();
+                return ListView(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  children: [
+                    _FmtBtn(
+                      icon: Icons.format_bold,
+                      active: style.containsKey(Attribute.bold.key),
+                      onTap: () => _toggleInlineAttr(Attribute.bold),
+                    ),
+                    _FmtBtn(
+                      icon: Icons.format_italic,
+                      active: style.containsKey(Attribute.italic.key),
+                      onTap: () => _toggleInlineAttr(Attribute.italic),
+                    ),
+                    _FmtBtn(
+                      icon: Icons.format_underline,
+                      active: style.containsKey(Attribute.underline.key),
+                      onTap: () => _toggleInlineAttr(Attribute.underline),
+                    ),
+                    _FmtBtn(
+                      icon: Icons.format_strikethrough,
+                      active: style.containsKey(Attribute.strikeThrough.key),
+                      onTap: () => _toggleInlineAttr(Attribute.strikeThrough),
+                    ),
+                    _fmtDivider(),
+                    _FmtBtn(
+                      icon: Icons.format_list_bulleted,
+                      active: style.containsKey(Attribute.ul.key),
+                      onTap: () => _toggleBlockAttr(Attribute.ul),
+                    ),
+                    _FmtBtn(
+                      icon: Icons.format_list_numbered,
+                      active: style.containsKey(Attribute.ol.key),
+                      onTap: () => _toggleBlockAttr(Attribute.ol),
+                    ),
+                    _FmtBtn(
+                      icon: Icons.checklist,
+                      active: style.containsKey(Attribute.unchecked.key),
+                      onTap: () => _toggleBlockAttr(Attribute.unchecked),
+                    ),
+                    _fmtDivider(),
+                    _FmtBtn(
+                      icon: Icons.format_quote,
+                      active: style.containsKey(Attribute.blockQuote.key),
+                      onTap: () => _toggleBlockAttr(Attribute.blockQuote),
+                    ),
+                    _FmtBtn(
+                      icon: Icons.code,
+                      active: style.containsKey(Attribute.inlineCode.key),
+                      onTap: () => _toggleInlineAttr(Attribute.inlineCode),
+                    ),
+                    _FmtBtn(
+                      icon: Icons.data_object,
+                      active: style.containsKey(Attribute.codeBlock.key),
+                      onTap: () => _toggleBlockAttr(Attribute.codeBlock),
+                    ),
+                    _FmtBtn(
+                      icon: Icons.format_clear,
+                      active: false,
+                      onTap: _clearFormat,
+                    ),
+                  ],
+                );
+              },
             ),
           ),
-        ),
+          Container(
+            width: 1,
+            height: 24,
+            color: AppColors.fgSoft.withValues(alpha: 0.2),
+          ),
+          IconButton(
+            icon: const Icon(Icons.close, size: 18, color: AppColors.fgSoft),
+            onPressed: () => setState(() => _showFormattingToolbar = false),
+            visualDensity: VisualDensity.compact,
+            padding: const EdgeInsets.all(8),
+            constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _toggleInlineAttr(Attribute attr) {
+    final style = _quillController!.getSelectionStyle();
+    final isSet = style.containsKey(attr.key);
+    _quillController!.formatSelection(isSet ? Attribute.clone(attr, null) : attr);
+  }
+
+  void _toggleBlockAttr(Attribute attr) {
+    final style = _quillController!.getSelectionStyle();
+    final isSet = style.containsKey(attr.key);
+    _quillController!.formatSelection(isSet ? Attribute.clone(attr, null) : attr);
+  }
+
+  void _clearFormat() {
+    final range = _quillController!.selection;
+    if (range.isCollapsed) return;
+    for (final attr in [
+      Attribute.bold,
+      Attribute.italic,
+      Attribute.underline,
+      Attribute.strikeThrough,
+      Attribute.inlineCode,
+    ]) {
+      _quillController!.formatSelection(Attribute.clone(attr, null));
+    }
+  }
+
+  Widget _fmtDivider() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 12),
+      child: Container(
+        width: 1,
+        color: AppColors.fgSoft.withValues(alpha: 0.2),
       ),
     );
   }
@@ -533,7 +1110,6 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
           },
         ),
       );
-      // Inline text field for adding new items
       final sectionKey = section.sectionId;
       _inlineChecklistCtrls[sectionKey] ??= TextEditingController();
       _inlineChecklistFocusNodes[sectionKey] ??= FocusNode();
@@ -545,7 +1121,7 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
           padding: const EdgeInsets.only(left: 8),
           child: Row(
             children: [
-              const SizedBox(width: 40), // align with checkbox
+              const SizedBox(width: 40),
               Expanded(
                 child: TextField(
                   controller: inlineCtrl,
@@ -568,7 +1144,6 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
                       sectionId: section.sectionId,
                     );
                     inlineCtrl.clear();
-                    // Keep focus for rapid entry
                     inlineFocus.requestFocus();
                   },
                 ),
@@ -713,7 +1288,7 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
   }
 
   bool _hasLocalInput() {
-    return _isDirty || _titleFocus.hasFocus || _contentFocus.hasFocus;
+    return _isDirty || _titleFocus.hasFocus || _editorFocusNode.hasFocus;
   }
 
   Future<void> _resolveRemoteConflict(String noteId, NoteModel latest) async {
@@ -745,6 +1320,7 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
       _isDirty = false;
       _pendingRemoteNote = null;
       _showRemoteBanner = false;
+      _lastHydratedNoteId = null;
     });
   }
 
@@ -802,7 +1378,9 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
     if (title.isEmpty) return;
     setState(() => _isSaving = true);
     try {
-      final content = _contentCtrl.text;
+      final content = _quillController != null
+          ? jsonEncode(_quillController!.document.toDelta().toJson())
+          : '';
       await ref.read(notesProvider.notifier).updateNote(
             noteId,
             title: title,
@@ -831,8 +1409,29 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
     }
   }
 
+  void _hydrateTitleFromNote(NoteModel note) {
+    final hasLocalInput = _isDirty || _titleFocus.hasFocus;
+    if (hasLocalInput) return;
+
+    final isFirstHydration = _lastHydratedNoteId != note.id;
+    final isNewerFromServer = _lastHydratedUpdatedAt == null ||
+        note.updatedAt.isAfter(_lastHydratedUpdatedAt!);
+    if (!isFirstHydration && !isNewerFromServer) return;
+
+    _titleCtrl.value = TextEditingValue(
+      text: note.title,
+      selection: TextSelection.collapsed(offset: note.title.length),
+    );
+    _lastHydratedNoteId = note.id;
+    _lastHydratedUpdatedAt = note.updatedAt;
+
+    if (!_isDirty) {
+      ref.read(blockEditorProvider(note.id).notifier).replaceAll(note.blocks);
+    }
+  }
+
   void _hydrateControllersFromNote(NoteModel note) {
-    final hasLocalInput = _isDirty || _titleFocus.hasFocus || _contentFocus.hasFocus;
+    final hasLocalInput = _isDirty || _titleFocus.hasFocus || _editorFocusNode.hasFocus;
     if (hasLocalInput) return;
 
     final isFirstHydration = _lastHydratedNoteId != note.id;
@@ -845,10 +1444,23 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
       text: note.title,
       selection: TextSelection.collapsed(offset: note.title.length),
     );
-    _contentCtrl.value = TextEditingValue(
-      text: note.content,
-      selection: TextSelection.collapsed(offset: note.content.length),
-    );
+
+    final doc = note.contentDocument;
+    if (_quillController == null) {
+      _quillController = QuillController(
+        document: doc,
+        selection: const TextSelection.collapsed(offset: 0),
+      );
+      _quillController!.addListener(() {
+        if (widget.noteId != null) {
+          _onEdited(widget.noteId!);
+          _emitTyping(widget.noteId!);
+        }
+      });
+    } else {
+      _quillController!.document = doc;
+      _quillController!.moveCursorToStart();
+    }
 
     _lastHydratedNoteId = note.id;
     _lastHydratedUpdatedAt = note.updatedAt;
@@ -861,10 +1473,8 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
     final movedItem = items.removeAt(oldIndex);
     items.insert(newIndex, movedItem);
 
-    // Optimistically update local state
     ref.read(noteDetailProvider(note.id).notifier).reorderChecklistLocally(items);
 
-    // Persist new positions to backend
     final service = ref.read(notesServiceProvider);
     for (int i = 0; i < items.length; i++) {
       if (items[i].position != i) {
@@ -875,7 +1485,6 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
 
   Future<void> _onChecklistActionTap(NoteModel note) async {
     if (note.checklistItems.isEmpty) {
-      // No sections yet -- create the first item via dialog
       final text = await _showChecklistInputDialog();
       if (text == null || text.trim().isEmpty) return;
       await _addChecklistItem(note.id, text.trim(), sectionId: 'main');
@@ -883,22 +1492,18 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
       return;
     }
 
-    // If starting a new section, create it and focus its inline field
     if (_startNewChecklistOnNextAdd) {
       final newSectionId = _generateChecklistSectionId();
-      // Create first item in the new section via dialog
       final text = await _showChecklistInputDialog();
       if (text == null || text.trim().isEmpty) return;
       await _addChecklistItem(note.id, text.trim(), sectionId: newSectionId);
       setState(() => _startNewChecklistOnNextAdd = false);
-      // Focus the new section's inline field after rebuild
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _inlineChecklistFocusNodes[newSectionId]?.requestFocus();
       });
       return;
     }
 
-    // Focus the last section's inline text field
     final sections = _splitChecklistSections(note.checklistItems);
     if (sections.isNotEmpty) {
       final lastSectionId = sections.last.sectionId;
@@ -948,24 +1553,6 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
     );
     ctrl.dispose();
     return result;
-  }
-
-  void _insertTextBlock(String noteId) {
-    final value = _contentCtrl.value;
-    final start = value.selection.start >= 0 ? value.selection.start : value.text.length;
-    final end = value.selection.end >= 0 ? value.selection.end : value.text.length;
-    const insertion = '\n\n';
-    final nextText = value.text.replaceRange(start, end, insertion);
-    final caret = start + insertion.length;
-
-    _contentCtrl.value = TextEditingValue(
-      text: nextText,
-      selection: TextSelection.collapsed(offset: caret),
-    );
-    _contentFocus.requestFocus();
-    setState(() => _startNewChecklistOnNextAdd = true);
-    _onEdited(noteId);
-    _emitTyping(noteId);
   }
 
   Future<void> _addChecklistItem(
@@ -1061,6 +1648,164 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
       ),
     );
   }
+
+  Future<void> _showCalendarSheet(NoteModel note) async {
+    DateTime selectedDate = DateTime.now();
+    TimeOfDay? selectedTime;
+
+    final result = await showModalBottomSheet<bool>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      useRootNavigator: true,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSheetState) => SafeArea(
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(
+              16, 8, 16, MediaQuery.of(ctx).viewInsets.bottom + 16,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  'Добавить в календарь',
+                  style: Theme.of(ctx).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 16),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(SolarIconsOutline.calendar),
+                  title: Text(DateFormat('d MMMM yyyy', 'ru').format(selectedDate)),
+                  trailing: const Icon(Icons.edit_outlined, size: 18),
+                  onTap: () async {
+                    final picked = await showDatePicker(
+                      context: ctx,
+                      initialDate: selectedDate,
+                      firstDate: DateTime(2020),
+                      lastDate: DateTime(2030),
+                    );
+                    if (picked != null) {
+                      setSheetState(() => selectedDate = picked);
+                    }
+                  },
+                ),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(SolarIconsOutline.clockCircle),
+                  title: Text(selectedTime != null
+                      ? selectedTime!.format(ctx)
+                      : 'Весь день'),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (selectedTime != null)
+                        IconButton(
+                          icon: const Icon(Icons.close, size: 18),
+                          onPressed: () => setSheetState(() => selectedTime = null),
+                        ),
+                      const Icon(Icons.edit_outlined, size: 18),
+                    ],
+                  ),
+                  onTap: () async {
+                    final picked = await showTimePicker(
+                      context: ctx,
+                      initialTime: selectedTime ?? TimeOfDay.now(),
+                    );
+                    if (picked != null) {
+                      setSheetState(() => selectedTime = picked);
+                    }
+                  },
+                ),
+                const SizedBox(height: 16),
+                ElevatedButton(
+                  onPressed: () => Navigator.of(ctx).pop(true),
+                  child: const Text('Добавить'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    if (result != true || !mounted) return;
+
+    try {
+      final ics = _buildIcs(
+        title: note.title,
+        description: NoteModel.extractPlainText(note.content),
+        date: selectedDate,
+        time: selectedTime,
+      );
+
+      final dir = await getTemporaryDirectory();
+      final file = File('${dir.path}/event.ics');
+      await file.writeAsString(ics);
+
+      await SharePlus.instance.share(
+        ShareParams(files: [XFile(file.path, mimeType: 'text/calendar')]),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Ошибка: ${mapError(e)}')),
+        );
+      }
+    }
+  }
+
+  String _buildIcs({
+    required String title,
+    required String description,
+    required DateTime date,
+    TimeOfDay? time,
+  }) {
+    final now = DateTime.now().toUtc();
+    final stamp = _icsTimestamp(now);
+    final uid = '${now.millisecondsSinceEpoch}@collab-notes';
+
+    final buf = StringBuffer()
+      ..writeln('BEGIN:VCALENDAR')
+      ..writeln('VERSION:2.0')
+      ..writeln('PRODID:-//CollabNotes//Event//RU')
+      ..writeln('BEGIN:VEVENT')
+      ..writeln('UID:$uid')
+      ..writeln('DTSTAMP:$stamp')
+      ..writeln('SUMMARY:${_icsEscape(title)}');
+
+    if (time != null) {
+      final start = DateTime(date.year, date.month, date.day, time.hour, time.minute);
+      final end = start.add(const Duration(hours: 1));
+      buf
+        ..writeln('DTSTART:${_icsTimestamp(start)}')
+        ..writeln('DTEND:${_icsTimestamp(end)}');
+    } else {
+      final d = '${date.year}${_pad(date.month)}${_pad(date.day)}';
+      buf
+        ..writeln('DTSTART;VALUE=DATE:$d')
+        ..writeln('DTEND;VALUE=DATE:$d');
+    }
+
+    if (description.isNotEmpty) {
+      buf.writeln('DESCRIPTION:${_icsEscape(description)}');
+    }
+
+    buf
+      ..writeln('END:VEVENT')
+      ..writeln('END:VCALENDAR');
+    return buf.toString();
+  }
+
+  String _icsTimestamp(DateTime dt) {
+    final u = dt.toUtc();
+    return '${u.year}${_pad(u.month)}${_pad(u.day)}T${_pad(u.hour)}${_pad(u.minute)}${_pad(u.second)}Z';
+  }
+
+  String _pad(int n) => n.toString().padLeft(2, '0');
+
+  String _icsEscape(String s) =>
+      s.replaceAll('\\', '\\\\').replaceAll('\n', '\\n').replaceAll(',', '\\,').replaceAll(';', '\\;');
 
   Future<void> _moveNote(NoteModel note) async {
     final groups = ref.read(groupsProvider).valueOrNull ?? [];
@@ -1288,13 +2033,13 @@ class _NewNoteEditor extends ConsumerStatefulWidget {
 
 class _NewNoteEditorState extends ConsumerState<_NewNoteEditor> {
   final _titleCtrl = TextEditingController();
-  final _contentCtrl = TextEditingController();
+  late final QuillController _quillController = QuillController.basic();
   bool _isSaving = false;
 
   @override
   void dispose() {
     _titleCtrl.dispose();
-    _contentCtrl.dispose();
+    _quillController.dispose();
     super.dispose();
   }
 
@@ -1320,11 +2065,11 @@ class _NewNoteEditorState extends ConsumerState<_NewNoteEditor> {
           ),
         ],
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            TextField(
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+            child: TextField(
               controller: _titleCtrl,
               autofocus: true,
               style: Theme.of(context).textTheme.headlineSmall?.copyWith(
@@ -1339,26 +2084,23 @@ class _NewNoteEditorState extends ConsumerState<_NewNoteEditor> {
                 filled: false,
               ),
             ),
-            const SizedBox(height: 8),
-            Expanded(
-              child: TextField(
-                controller: _contentCtrl,
-                maxLines: null,
-                expands: true,
-                keyboardType: TextInputType.multiline,
-                textAlignVertical: TextAlignVertical.top,
-                decoration: const InputDecoration(
-                  hintText: 'Начните писать...',
-                  border: InputBorder.none,
-                  enabledBorder: InputBorder.none,
-                  focusedBorder: InputBorder.none,
-                  contentPadding: EdgeInsets.zero,
-                  filled: false,
+          ),
+          const SizedBox(height: 8),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: QuillEditor.basic(
+                controller: _quillController,
+                config: const QuillEditorConfig(
+                  placeholder: 'Начните писать...',
+                  padding: EdgeInsets.zero,
+                  autoFocus: false,
+                  expands: true,
                 ),
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -1379,11 +2121,12 @@ class _NewNoteEditorState extends ConsumerState<_NewNoteEditor> {
 
     setState(() => _isSaving = true);
     try {
+      final content = jsonEncode(_quillController.document.toDelta().toJson());
       final note = await ref.read(notesProvider.notifier).createNote(
             groupId: groupId,
-        personal: personal,
+            personal: personal,
             title: _titleCtrl.text.trim(),
-            content: _contentCtrl.text,
+            content: content,
           );
       if (context.mounted) {
         context.go('/notes/${note.id}');
@@ -1558,3 +2301,38 @@ class _ChecklistLongPressDragStartListener extends ReorderableDragStartListener 
   }
 }
 
+class _FmtBtn extends StatelessWidget {
+  final IconData icon;
+  final bool active;
+  final VoidCallback onTap;
+
+  const _FmtBtn({
+    required this.icon,
+    required this.active,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 2),
+      child: Material(
+        color: active ? AppColors.white : Colors.transparent,
+        borderRadius: BorderRadius.circular(8),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(8),
+          child: SizedBox(
+            width: 36,
+            height: 36,
+            child: Icon(
+              icon,
+              size: 18,
+              color: active ? AppColors.bg1 : AppColors.white,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
