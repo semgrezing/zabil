@@ -1,14 +1,19 @@
 import 'dart:io';
 import 'frosted_bar.dart';
+import 'confetti_overlay.dart';
+import '../utils/haptics.dart';
 import 'dart:async';
 
+import 'package:confetti/confetti.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:solar_icons/solar_icons.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../core/config/app_config.dart';
 import '../../features/chats/providers/chats_provider.dart';
+import '../../features/groups/models/group_model.dart';
 import '../../features/groups/providers/groups_provider.dart';
 import '../../features/notes/providers/notes_provider.dart';
 import '../../features/updates/providers/update_provider.dart';
@@ -31,6 +36,7 @@ class MainShell extends ConsumerStatefulWidget {
 
 class _MainShellState extends ConsumerState<MainShell> {
   StreamSubscription? _pushSub;
+  late final ConfettiController _confettiCtrl = ConfettiController(duration: const Duration(seconds: 3));
 
   static const _tabs = [
     _TabItem(icon: SolarIconsOutline.notes, activeIcon: SolarIconsBold.notes, label: 'Заметки', path: '/notes'),
@@ -59,6 +65,7 @@ class _MainShellState extends ConsumerState<MainShell> {
 
   @override
   void dispose() {
+    _confettiCtrl.dispose();
     _pushSub?.cancel();
     _mentionSub?.cancel();
     super.dispose();
@@ -122,6 +129,8 @@ class _MainShellState extends ConsumerState<MainShell> {
                 : Platform.operatingSystem;
         if (platform != null && platform != currentPlatform) break;
         ref.invalidate(updateCheckProvider);
+        _confettiCtrl.play();
+        Haptics.success();
         messenger.showSnackBar(
           SnackBar(
             content: Text(event.body.isNotEmpty
@@ -142,25 +151,6 @@ class _MainShellState extends ConsumerState<MainShell> {
     }
   }
 
-  /// Total unread count across personal + group conversations.
-  int _totalUnread(WidgetRef ref) {
-    final personalList = ref.watch(personalConversationsProvider).valueOrNull ?? [];
-    final personalUnread = personalList.fold<int>(0, (sum, c) => sum + c.unreadCount);
-    // TODO(B17): Add group unread counts once backend provides them
-    final groupsList = ref.watch(groupsProvider).valueOrNull ?? [];
-    final groupUnread = groupsList.fold<int>(0, (sum, g) => sum + g.unreadCount);
-    return personalUnread + groupUnread;
-  }
-
-  int _pendingInvitationsCount(WidgetRef ref) {
-    return (ref.watch(invitationsProvider).valueOrNull ?? []).length;
-  }
-
-  int _unreadMentionsCount(WidgetRef ref) {
-    return (ref.watch(mentionsProvider).valueOrNull ?? [])
-        .where((m) => !m.read)
-        .length;
-  }
 
   void _handleMentionEvent(MentionEvent event) {
     if (!mounted) return;
@@ -189,6 +179,8 @@ class _MainShellState extends ConsumerState<MainShell> {
       ref.read(_updateBannerShownProvider.notifier).state = true;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!context.mounted) return;
+        _confettiCtrl.play();
+        Haptics.success();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('🎉 Доступна версия ${updateInfo.latestVersion}'),
@@ -212,84 +204,149 @@ class _MainShellState extends ConsumerState<MainShell> {
     final notesFilter = isNotesRoot ? ref.watch(notesFilterProvider) : null;
     final showFab = isNotesRoot && !(notesFilter?.showArchived ?? false);
 
-    return Scaffold(
+    return ConfettiOverlay(
+      controller: _confettiCtrl,
+      child: Scaffold(
       extendBody: true,
       body: widget.child,
       bottomNavigationBar: hideBottomNavbar
           ? null
-          : Padding(
-        padding: EdgeInsets.only(
-          bottom: MediaQuery.of(context).padding.bottom + 8,
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            FrostedBar(
-                child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      ..._tabs.asMap().entries.map((entry) {
-                        final index = entry.key;
-                        final tab = entry.value;
-                        final isActive = index == (currentIndex < 0 ? 0 : currentIndex);
-                        final badgeCount = index == 1 ? _totalUnread(ref) : 0;
-                        return SizedBox(
-                          width: 56,
-                          height: 48,
-                          child: IconButton(
-                            icon: Badge(
-                              isLabelVisible: badgeCount > 0,
-                              label: Text(
-                                badgeCount > 99 ? '99+' : badgeCount.toString(),
-                                style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w700),
-                              ),
-                              child: Icon(
-                                isActive ? tab.activeIcon : tab.icon,
-                                size: 22,
-                              ),
-                            ),
-                            color: isActive ? AppColors.white : AppColors.fgSoft,
-                            tooltip: tab.label,
-                            onPressed: () {
-                              if (index != currentIndex) {
-                                context.go(tab.path);
-                              }
-                            },
-                          ),
-                        );
-                      }),
-                      _InvitationsNavButton(
-                        count: _pendingInvitationsCount(ref) + _unreadMentionsCount(ref),
-                        isActive: location.startsWith('/invitations'),
-                        onPressed: () => context.push('/invitations'),
+          : _BottomNavBar(
+              currentIndex: currentIndex,
+              location: location,
+              showFab: showFab,
+            ),
+    ),
+    );
+  }
+}
+
+class _BottomNavBar extends ConsumerWidget {
+  final int currentIndex;
+  final String location;
+  final bool showFab;
+
+  const _BottomNavBar({
+    required this.currentIndex,
+    required this.location,
+    required this.showFab,
+  });
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final personalList = ref.watch(personalConversationsProvider).valueOrNull ?? [];
+    final personalUnread = personalList.fold<int>(0, (sum, c) => sum + c.unreadCount);
+    final groupsList = ref.watch(groupsProvider).valueOrNull ?? [];
+    final groupUnread = groupsList.fold<int>(0, (sum, g) => sum + g.unreadCount);
+    final totalUnread = personalUnread + groupUnread;
+
+    final pendingInvitations = (ref.watch(invitationsProvider).valueOrNull ?? []).length;
+    final unreadMentions = (ref.watch(mentionsProvider).valueOrNull ?? [])
+        .where((m) => !m.read)
+        .length;
+
+    return Padding(
+      padding: EdgeInsets.only(
+        bottom: MediaQuery.of(context).padding.bottom + 8,
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          FrostedBar(
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ..._MainShellState._tabs.asMap().entries.map((entry) {
+                  final index = entry.key;
+                  final tab = entry.value;
+                  final isActive = index == (currentIndex < 0 ? 0 : currentIndex);
+                  final badgeCount = index == 1 ? totalUnread : 0;
+                  return SizedBox(
+                    width: 56,
+                    height: 48,
+                    child: IconButton(
+                      icon: Badge(
+                        isLabelVisible: badgeCount > 0,
+                        label: Text(
+                          badgeCount > 99 ? '99+' : badgeCount.toString(),
+                          style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w700),
+                        ),
+                        child: Icon(
+                          isActive ? tab.activeIcon : tab.icon,
+                          size: 22,
+                        ),
                       ),
-                    ],
-                  ),
+                      color: isActive ? AppColors.white : AppColors.fgSoft,
+                      tooltip: tab.label,
+                      onPressed: () {
+                        if (index != currentIndex) {
+                          Haptics.selection();
+                          context.go(tab.path);
+                        }
+                      },
+                    ),
+                  );
+                }),
+                _InvitationsNavButton(
+                  count: pendingInvitations + unreadMentions,
+                  isActive: location.startsWith('/invitations'),
+                  onPressed: () => context.push('/invitations'),
                 ),
-            if (showFab) ...[
-              const SizedBox(width: 12),
-              _NoteFab(),
-            ],
+              ],
+            ),
+          ),
+          if (showFab) ...[
+            const SizedBox(width: 12),
+            _NoteFab(),
           ],
-        ),
+        ],
       ),
     );
   }
 }
 
-class _NoteFab extends ConsumerWidget {
+class _NoteFab extends ConsumerStatefulWidget {
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    return Material(
-      color: AppColors.white,
-      borderRadius: BorderRadius.circular(16),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: () => _createNote(context, ref),
-        child: const SizedBox(
-          width: 56,
-          height: 48,
-          child: Icon(Icons.add_rounded, color: AppColors.fgContainer, size: 28),
+  ConsumerState<_NoteFab> createState() => _NoteFabState();
+}
+
+class _NoteFabState extends ConsumerState<_NoteFab> with SingleTickerProviderStateMixin {
+  late final AnimationController _scaleCtrl = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 150),
+    lowerBound: 0.0,
+    upperBound: 1.0,
+  );
+
+  @override
+  void dispose() {
+    _scaleCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _scaleCtrl,
+      builder: (context, child) {
+        final scale = 1.0 - _scaleCtrl.value * 0.15;
+        return Transform.scale(scale: scale, child: child);
+      },
+      child: Material(
+        color: AppColors.white,
+        borderRadius: BorderRadius.circular(16),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: () {
+            Haptics.medium();
+            _scaleCtrl.forward().then((_) => _scaleCtrl.reverse());
+            _createNote(context, ref);
+          },
+          child: const SizedBox(
+            width: 56,
+            height: 48,
+            child: Icon(Icons.add_rounded, color: AppColors.fgContainer, size: 28),
+          ),
         ),
       ),
     );
@@ -308,17 +365,17 @@ class _NoteFab extends ConsumerWidget {
       return;
     }
 
-    final groupsAsync = ref.read(groupsProvider);
-    final personalAsync = ref.read(personalContextProvider);
+    var groupsAsync = ref.read(groupsProvider);
+    var personalAsync = ref.read(personalContextProvider);
 
     if (groupsAsync.isLoading || personalAsync.isLoading) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Загрузка групп...'),
-          duration: Duration(seconds: 1),
-        ),
-      );
-      return;
+      await Future.wait([
+        ref.read(groupsProvider.future).catchError((_) => const <GroupModel>[]),
+        ref.read(personalContextProvider.future).then<void>((_) {}).catchError((_) {}),
+      ]);
+      if (!context.mounted) return;
+      groupsAsync = ref.read(groupsProvider);
+      personalAsync = ref.read(personalContextProvider);
     }
 
     final groups = groupsAsync.valueOrNull ?? [];
@@ -335,7 +392,7 @@ class _NoteFab extends ConsumerWidget {
 
     final contexts = <_NoteContext>[
       if (personal != null) _NoteContext(id: personal.id, title: 'Личное', personal: true),
-      ...groups.map((g) => _NoteContext(id: g.id, title: g.title, personal: false)),
+      ...groups.map((g) => _NoteContext(id: g.id, title: g.title, personal: false, avatarUrl: g.avatarUrl)),
     ];
 
     if (contexts.length == 1) {
@@ -371,7 +428,8 @@ class _NoteContext {
   final String id;
   final String title;
   final bool personal;
-  const _NoteContext({required this.id, required this.title, required this.personal});
+  final String? avatarUrl;
+  const _NoteContext({required this.id, required this.title, required this.personal, this.avatarUrl});
 }
 
 class _NoteLocationSheet extends StatelessWidget {
@@ -418,6 +476,7 @@ class _NoteLocationSheet extends StatelessWidget {
                     _NoteLocationOption(
                       title: contextItem.title,
                       personal: contextItem.personal,
+                      avatarUrl: contextItem.avatarUrl,
                       onTap: () => Navigator.of(context).pop(contextItem),
                     ),
                     if (contextItem != contexts.last) const SizedBox(height: 8),
@@ -453,16 +512,26 @@ class _BottomSheetHandle extends StatelessWidget {
 class _NoteLocationOption extends StatelessWidget {
   final String title;
   final bool personal;
+  final String? avatarUrl;
   final VoidCallback onTap;
 
   const _NoteLocationOption({
     required this.title,
     required this.personal,
     required this.onTap,
+    this.avatarUrl,
   });
+
+  static String? _resolveUrl(String? raw) {
+    if (raw == null || raw.isEmpty) return null;
+    if (raw.startsWith('http://') || raw.startsWith('https://')) return raw;
+    return '${AppConfig.apiOrigin}$raw';
+  }
 
   @override
   Widget build(BuildContext context) {
+    final resolved = _resolveUrl(avatarUrl);
+    final letter = title.isNotEmpty ? title[0].toUpperCase() : '?';
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -478,13 +547,20 @@ class _NoteLocationOption extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             child: Row(
               children: [
-                Container(
-                  width: 48,
-                  height: 48,
-                  decoration: const BoxDecoration(
-                    color: Color(0xFF2A2A2A),
-                    shape: BoxShape.circle,
-                  ),
+                CircleAvatar(
+                  radius: 24,
+                  backgroundColor: const Color(0xFF2A2A2A),
+                  backgroundImage: resolved != null ? NetworkImage(resolved) : null,
+                  child: resolved == null
+                      ? Text(
+                          personal ? '👤' : letter,
+                          style: const TextStyle(
+                            color: AppColors.white,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        )
+                      : null,
                 ),
                 const SizedBox(width: 12),
                 Expanded(

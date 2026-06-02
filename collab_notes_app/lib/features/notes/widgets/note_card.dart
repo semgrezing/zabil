@@ -2,7 +2,9 @@ import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:solar_icons/solar_icons.dart';
+import '../../../shared/utils/haptics.dart';
 import '../models/note_model.dart';
 import '../models/note_block_model.dart';
 import '../screens/image_viewer_screen.dart';
@@ -43,13 +45,27 @@ class NoteCard extends StatefulWidget {
 class _NoteCardState extends State<NoteCard> {
   double _dragProgress = 0.0;
   double _dragSign = 0.0;
+  bool _hapticFiredForThreshold = false;
+  String? _cachedPreview;
+  NoteModel? _cachedPreviewNote;
+
+  static final _bracketRe = RegExp(r'^\[|\]$');
 
   String _extractPreview() {
+    if (identical(note, _cachedPreviewNote) && _cachedPreview != null) {
+      return _cachedPreview!;
+    }
+    _cachedPreviewNote = note;
+    _cachedPreview = _computePreview();
+    return _cachedPreview!;
+  }
+
+  String _computePreview() {
     if (note.migrated && note.blocks.isNotEmpty) {
       for (final block in note.blocks) {
         if (block.type == NoteBlockType.text) {
           final text = NoteModel.extractPlainText(
-            '${block.deltaOps}'.replaceAll(RegExp(r'^\[|\]$'), '') == '{}'
+            '${block.deltaOps}'.replaceAll(_bracketRe, '') == '{}'
                 ? ''
                 : _deltaToJsonString(block.deltaOps),
           );
@@ -103,6 +119,13 @@ class _NoteCardState extends State<NoteCard> {
         DismissDirection.endToStart: 0.4,
       },
       onUpdate: (details) {
+        final crossedThreshold = details.progress >= 0.4;
+        if (crossedThreshold && !_hapticFiredForThreshold) {
+          Haptics.medium();
+          _hapticFiredForThreshold = true;
+        } else if (!crossedThreshold && _hapticFiredForThreshold) {
+          _hapticFiredForThreshold = false;
+        }
         setState(() {
           _dragProgress = details.progress;
           _dragSign =
@@ -111,6 +134,7 @@ class _NoteCardState extends State<NoteCard> {
       },
       confirmDismiss: (direction) async {
         if (direction == DismissDirection.startToEnd) {
+          Haptics.error();
           return await _confirmDelete(context);
         } else {
           onArchive?.call();
@@ -209,7 +233,10 @@ class _NoteCardState extends State<NoteCard> {
     final totalItems = note.checklistItems.length;
 
     return GestureDetector(
-      onLongPressStart: (details) => _showContextMenu(context, details.globalPosition),
+      onLongPressStart: (details) {
+        Haptics.heavy();
+        _showContextMenu(context, details.globalPosition);
+      },
       onSecondaryTapUp: (details) => _showContextMenu(context, details.globalPosition),
       child: Material(
         color: const Color(0xFF1A1A1A),
@@ -556,6 +583,8 @@ class _NoteImagesRow extends StatelessWidget {
                 child: ResilientImage(
                   urls: img.urlCandidates,
                   fit: BoxFit.cover,
+                  cacheWidth: 128,
+                  cacheHeight: 128,
                   errorBuilder: (context) => Container(
                   width: _imageHeight,
                   height: _imageHeight,
@@ -579,15 +608,27 @@ class _NoteImagesRow extends StatelessWidget {
     );
 
     if (needsFade) {
-      row = ShaderMask(
-        shaderCallback: (bounds) => const LinearGradient(
-          begin: Alignment.centerLeft,
-          end: Alignment.centerRight,
-          colors: [Colors.black, Colors.black, Colors.transparent],
-          stops: [0.0, 0.75, 1.0],
-        ).createShader(bounds),
-        blendMode: BlendMode.dstIn,
-        child: row,
+      row = Stack(
+        children: [
+          row,
+          Positioned(
+            right: 0,
+            top: 0,
+            bottom: 0,
+            width: _imageHeight,
+            child: const IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.centerLeft,
+                    end: Alignment.centerRight,
+                    colors: [Color(0x001A1A1A), Color(0xFF1A1A1A)],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
       );
     }
 

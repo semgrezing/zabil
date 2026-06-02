@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../../../shared/utils/haptics.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 import 'package:go_router/go_router.dart';
@@ -218,78 +219,90 @@ class _NotesListScreenState extends ConsumerState<NotesListScreen> {
                 Expanded(
                   child: SizedBox(
                     height: 36,
-                    child: ShaderMask(
-                      shaderCallback: (bounds) => const LinearGradient(
-                        begin: Alignment.centerLeft,
-                        end: Alignment.centerRight,
-                        colors: [
-                          Colors.black,
-                          Colors.black,
-                          Colors.transparent,
-                        ],
-                        stops: [0.0, 0.85, 1.0],
-                      ).createShader(bounds),
-                      blendMode: BlendMode.dstIn,
-                      child: ListView(
-                        scrollDirection: Axis.horizontal,
-                        children: [
-                          Padding(
-                            padding: const EdgeInsets.only(right: 8),
-                            child: AppChip(
-                              label: notesCounts.containsKey('all')
-                                  ? 'Все (${notesCounts['all']})'
-                                  : 'Все',
-                              selected:
-                                  filter.groupId == null && !filter.personal,
+                    child: Stack(
+                      children: [
+                        ListView(
+                          scrollDirection: Axis.horizontal,
+                          padding: const EdgeInsets.only(right: 24),
+                          children: [
+                            Padding(
+                              padding: const EdgeInsets.only(right: 8),
+                              child: AppChip(
+                                label: notesCounts.containsKey('all')
+                                    ? 'Все (${notesCounts['all']})'
+                                    : 'Все',
+                                selected:
+                                    filter.groupId == null && !filter.personal,
                                 inactiveBackgroundColor: const Color(0xFF1A1A1A),
-                              onPressed: () => ref
-                                  .read(notesFilterProvider.notifier)
-                                  .update((s) => NotesFilter(
-                                        search: s.search,
-                                        showArchived: s.showArchived,
-                                      )),
+                                onPressed: () => ref
+                                    .read(notesFilterProvider.notifier)
+                                    .update((s) => NotesFilter(
+                                          search: s.search,
+                                          showArchived: s.showArchived,
+                                        )),
+                              ),
                             ),
-                          ),
-                          Padding(
-                            padding: const EdgeInsets.only(right: 8),
-                            child: AppChip(
-                              label: notesCounts.containsKey('personal')
-                                  ? 'Личное (${notesCounts['personal']})'
-                                  : 'Личное',
-                              selected: filter.personal,
+                            Padding(
+                              padding: const EdgeInsets.only(right: 8),
+                              child: AppChip(
+                                label: notesCounts.containsKey('personal')
+                                    ? 'Личное (${notesCounts['personal']})'
+                                    : 'Личное',
+                                selected: filter.personal,
                                 inactiveBackgroundColor: const Color(0xFF1A1A1A),
-                              onPressed: () => ref
-                                  .read(notesFilterProvider.notifier)
-                                  .update(
-                                    (s) => s.copyWith(
-                                        personal: true, groupId: null),
+                                onPressed: () => ref
+                                    .read(notesFilterProvider.notifier)
+                                    .update(
+                                      (s) => s.copyWith(
+                                          personal: true, groupId: null),
+                                    ),
+                              ),
+                            ),
+                            ...groups.map(
+                              (g) {
+                                final count = notesCounts[g.id];
+                                return Padding(
+                                  padding: const EdgeInsets.only(right: 8),
+                                  child: AppChip(
+                                    label: count != null
+                                        ? '${g.title} ($count)'
+                                        : g.title,
+                                    selected: filter.groupId == g.id &&
+                                        !filter.personal,
+                                    inactiveBackgroundColor: const Color(0xFF1A1A1A),
+                                    onPressed: () => ref
+                                        .read(notesFilterProvider.notifier)
+                                        .update(
+                                          (s) => s.copyWith(
+                                              groupId: g.id, personal: false),
+                                        ),
                                   ),
+                                );
+                              },
+                            ),
+                          ],
+                        ),
+                        Positioned(
+                          right: 0,
+                          top: 0,
+                          bottom: 0,
+                          width: 24,
+                          child: IgnorePointer(
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  begin: Alignment.centerLeft,
+                                  end: Alignment.centerRight,
+                                  colors: [
+                                    AppColors.bg1.withValues(alpha: 0),
+                                    AppColors.bg1,
+                                  ],
+                                ),
+                              ),
                             ),
                           ),
-                          ...groups.map(
-                            (g) {
-                              final count = notesCounts[g.id];
-                              return Padding(
-                                padding: const EdgeInsets.only(right: 8),
-                                child: AppChip(
-                                  label: count != null
-                                      ? '${g.title} ($count)'
-                                      : g.title,
-                                  selected: filter.groupId == g.id &&
-                                      !filter.personal,
-                                  inactiveBackgroundColor: const Color(0xFF1A1A1A),
-                                  onPressed: () => ref
-                                      .read(notesFilterProvider.notifier)
-                                      .update(
-                                        (s) => s.copyWith(
-                                            groupId: g.id, personal: false),
-                                      ),
-                                ),
-                              );
-                            },
-                          ),
-                        ],
-                      ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
@@ -373,7 +386,7 @@ class _NotesListScreenState extends ConsumerState<NotesListScreen> {
 
                 Widget contentBuilder(int index) {
                   final note = notes[index];
-                  return NoteCard(
+                  return RepaintBoundary(child: NoteCard(
                     note: note,
                     highlightText: textHighlights.contains(note.id),
                     highlightChecklist: checklistHighlights.contains(note.id),
@@ -387,7 +400,7 @@ class _NotesListScreenState extends ConsumerState<NotesListScreen> {
                     onTogglePin: () => _togglePin(context, ref, note),
                     onColorChanged: (color) =>
                         _setNoteColor(context, ref, note, color),
-                  );
+                  ));
                 }
 
                 final viewport = _gridView
@@ -397,8 +410,10 @@ class _NotesListScreenState extends ConsumerState<NotesListScreen> {
                         backgroundColor: AppColors.bg3,
                         displacement: 60,
                         strokeWidth: 2.5,
-                        onRefresh: () =>
-                            ref.read(notesProvider.notifier).refresh(),
+                        onRefresh: () {
+                            Haptics.medium();
+                            return ref.read(notesProvider.notifier).refresh();
+                        },
                         child: LayoutBuilder(
                           builder: (context, constraints) {
                             final crossAxisCount = constraints.maxWidth >= 1200
@@ -418,7 +433,7 @@ class _NotesListScreenState extends ConsumerState<NotesListScreen> {
                               itemCount: notes.length,
                               itemBuilder: (context, index) {
                                 final note = notes[index];
-                                return NoteCard(
+                                return RepaintBoundary(child: NoteCard(
                                   key: ValueKey('grid_${note.id}'),
                                   note: note,
                                   compactMode: true,
@@ -438,7 +453,7 @@ class _NotesListScreenState extends ConsumerState<NotesListScreen> {
                                       _togglePin(context, ref, note),
                                   onColorChanged: (color) =>
                                       _setNoteColor(context, ref, note, color),
-                                );
+                                ));
                               },
                             );
                           },
@@ -446,8 +461,10 @@ class _NotesListScreenState extends ConsumerState<NotesListScreen> {
                       )
                     : RefreshIndicator(
                         key: const ValueKey('notes_list_refresh'),
-                        onRefresh: () =>
-                            ref.read(notesProvider.notifier).refresh(),
+                        onRefresh: () {
+                            Haptics.medium();
+                            return ref.read(notesProvider.notifier).refresh();
+                        },
                         child: ListView.separated(
                           key: const PageStorageKey('notes_list'),
                           padding: const EdgeInsets.fromLTRB(12, 4, 12, 80),

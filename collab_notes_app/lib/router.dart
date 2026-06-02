@@ -17,6 +17,7 @@ import '../features/invitations/screens/invitations_screen.dart';
 import '../features/search/screens/search_screen.dart';
 import '../features/settings/screens/settings_screen.dart';
 import '../features/activity/screens/activity_feed_screen.dart';
+import '../features/settings/screens/changelog_screen.dart';
 import '../shared/widgets/main_shell.dart';
 
 final routerProvider = Provider<GoRouter>((ref) {
@@ -95,6 +96,11 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/activity',
         builder: (_, __) => const ActivityFeedScreen(),
+      ),
+      // Changelog
+      GoRoute(
+        path: '/changelog',
+        builder: (_, __) => const ChangelogScreen(),
       ),
       // User profile (from personal chat header)
       GoRoute(

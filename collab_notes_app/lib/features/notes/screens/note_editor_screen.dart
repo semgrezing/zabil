@@ -5,6 +5,7 @@ import '../../../shared/widgets/frosted_bar.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../../../shared/utils/haptics.dart';
 import 'package:flutter_quill/flutter_quill.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -565,6 +566,7 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
       buildDefaultDragHandles: false,
       onReorder: (oldIndex, newIndex) {
         if (newIndex > oldIndex) newIndex--;
+        Haptics.light();
         ref.read(blockEditorProvider(note.id).notifier).reorderBlocks(oldIndex, newIndex);
       },
       header: Column(
@@ -1431,6 +1433,7 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
             title: title,
             content: content,
           );
+      Haptics.success();
       if (mounted) {
         setState(() {
           _isDirty = false;
@@ -1613,12 +1616,9 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
   }
 
   Future<void> _pickAndUploadImages(String noteId) async {
-    final compressed = await _pickImageUploadMode();
-    if (compressed == null) return;
-
     final picker = ImagePicker();
     final picked = await picker.pickMultiImage(
-      imageQuality: compressed ? 65 : null,
+      imageQuality: 65,
     );
     if (picked.isEmpty) return;
 
@@ -1650,41 +1650,6 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
           failed == 0
               ? 'Загружено изображений: $uploaded'
               : 'Загружено: $uploaded, ошибок: $failed',
-        ),
-      ),
-    );
-  }
-
-  Future<bool?> _pickImageUploadMode() {
-    return showModalBottomSheet<bool>(
-      context: context,
-      showDragHandle: true,
-      useRootNavigator: true,
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-              child: Text(
-                'Загрузка изображений',
-                style: Theme.of(ctx).textTheme.titleMedium,
-              ),
-            ),
-            ListTile(
-              leading: const Icon(Icons.compress_outlined),
-              title: const Text('Со сжатием'),
-              subtitle: const Text('Меньше размер, быстрее загрузка'),
-              onTap: () => Navigator.of(ctx).pop(true),
-            ),
-            ListTile(
-              leading: const Icon(Icons.image_outlined),
-              title: const Text('Без сжатия'),
-              subtitle: const Text('Оригинальное качество'),
-              onTap: () => Navigator.of(ctx).pop(false),
-            ),
-            const SizedBox(height: 12),
-          ],
         ),
       ),
     );

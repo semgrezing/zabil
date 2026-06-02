@@ -139,6 +139,11 @@ class SettingsScreen extends ConsumerWidget {
           ListTile(
             leading: const Icon(SolarIconsOutline.refresh),
             title: const Text('Проверить обновления'),
+            trailing: IconButton(
+              icon: const Icon(SolarIconsOutline.infoCircle, size: 20),
+              tooltip: 'История изменений',
+              onPressed: () => context.push('/changelog'),
+            ),
             onTap: () => _checkForUpdate(context),
           ),
 

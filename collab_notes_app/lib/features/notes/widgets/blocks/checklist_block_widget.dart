@@ -1,7 +1,9 @@
 import 'dart:convert';
 
+import 'package:confetti/confetti.dart';
 import 'package:flutter/material.dart';
 import '../../../../shared/theme/app_colors.dart';
+import '../../../../shared/utils/haptics.dart';
 import '../../models/note_block_model.dart';
 
 class ChecklistBlockWidget extends StatefulWidget {
@@ -24,6 +26,7 @@ class _ChecklistBlockWidgetState extends State<ChecklistBlockWidget> {
   late List<ChecklistBlockItem> _items;
   final _addCtrl = TextEditingController();
   final _addFocus = FocusNode();
+  late final ConfettiController _confettiCtrl = ConfettiController(duration: const Duration(seconds: 2));
 
   @override
   void initState() {
@@ -47,9 +50,19 @@ class _ChecklistBlockWidgetState extends State<ChecklistBlockWidget> {
   }
 
   void _toggleItem(int index) {
+    final wasCompleted = _items[index].completed;
     setState(() {
-      _items[index] = _items[index].copyWith(completed: !_items[index].completed);
+      _items[index] = _items[index].copyWith(completed: !wasCompleted);
     });
+    if (!wasCompleted) {
+      Haptics.medium();
+      if (_items.every((i) => i.completed)) {
+        _confettiCtrl.play();
+        Haptics.success();
+      }
+    } else {
+      Haptics.light();
+    }
     _emitChange();
   }
 
@@ -81,6 +94,7 @@ class _ChecklistBlockWidgetState extends State<ChecklistBlockWidget> {
 
   @override
   void dispose() {
+    _confettiCtrl.dispose();
     _addCtrl.dispose();
     _addFocus.dispose();
     super.dispose();
@@ -90,7 +104,10 @@ class _ChecklistBlockWidgetState extends State<ChecklistBlockWidget> {
   Widget build(BuildContext context) {
     return Focus(
       focusNode: widget.focusNode,
-      child: Column(
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+      Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           ..._items.asMap().entries.map((entry) {
@@ -120,6 +137,27 @@ class _ChecklistBlockWidgetState extends State<ChecklistBlockWidget> {
             ),
           ),
         ],
+      ),
+      Positioned.fill(
+        child: Align(
+          alignment: Alignment.topCenter,
+          child: ConfettiWidget(
+            confettiController: _confettiCtrl,
+            blastDirectionality: BlastDirectionality.explosive,
+            shouldLoop: false,
+            emissionFrequency: 0.08,
+            numberOfParticles: 15,
+            maxBlastForce: 20,
+            minBlastForce: 5,
+            gravity: 0.15,
+            colors: const [
+              Color(0xFF69DB7C), Color(0xFF4DABF7), Color(0xFFFFD43B),
+              Color(0xFFDA77F2), Color(0xFFF783AC),
+            ],
+          ),
+        ),
+      ),
+      ],
       ),
     );
   }

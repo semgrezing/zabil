@@ -4,6 +4,7 @@ import '../../../shared/widgets/frosted_bar.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../../../shared/utils/haptics.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
@@ -256,7 +257,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   Future<void> _send() async {
     final text = _inputCtrl.text.trim();
     if (text.isEmpty || _sending) return;
-    HapticFeedback.lightImpact();
+    Haptics.medium();
     setState(() => _sending = true);
     final messenger = ScaffoldMessenger.of(context);
     try {
@@ -298,8 +299,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final files = await picker.pickMultiImage();
     if (files.isEmpty) return;
 
-    final compressed = await _askCompressionMode();
-    if (compressed == null) return;
+    const compressed = true;
 
     setState(() => _sending = true);
     try {
@@ -399,33 +399,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         }
       }
     }
-  }
-
-  Future<bool?> _askCompressionMode() {
-    return showModalBottomSheet<bool>(
-      context: context,
-      showDragHandle: true,
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(SolarIconsOutline.gallery),
-              title: const Text('Отправить со сжатием'),
-              subtitle: const Text('Быстрее отправка, меньше размер'),
-              onTap: () => Navigator.of(ctx).pop(true),
-            ),
-            ListTile(
-              leading: const Icon(SolarIconsOutline.gallery),
-              title: const Text('Отправить без сжатия'),
-              subtitle: const Text('Оригинальное качество'),
-              onTap: () => Navigator.of(ctx).pop(false),
-            ),
-            const SizedBox(height: 8),
-          ],
-        ),
-      ),
-    );
   }
 
   PreferredSizeWidget _buildAppBar(BuildContext context) {
@@ -1026,7 +999,7 @@ String _displayName(Map<String, String> user) {
   return user['username'] ?? '?';
 }
 
-class _MessageBubble extends StatelessWidget {
+class _MessageBubble extends StatefulWidget {
   final String body;
   final String? imageUrl;
   final DateTime time;
@@ -1065,10 +1038,70 @@ class _MessageBubble extends StatelessWidget {
     this.replyTo,
   });
 
-  bool get _isImageOnly => imageUrl != null && body.trim().isEmpty;
+  @override
+  State<_MessageBubble> createState() => _MessageBubbleState();
+}
+
+class _MessageBubbleState extends State<_MessageBubble> with SingleTickerProviderStateMixin {
+  late final AnimationController _springCtrl;
+  late final Animation<double> _scaleAnim;
+  late final Animation<Offset> _slideAnim;
+
+  @override
+  void initState() {
+    super.initState();
+    _springCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 400),
+    );
+    _scaleAnim = Tween<double>(begin: 0.85, end: 1.0).animate(
+      CurvedAnimation(parent: _springCtrl, curve: Curves.elasticOut),
+    );
+    _slideAnim = Tween<Offset>(
+      begin: Offset(0, widget.mine ? 0.3 : 0.3),
+      end: Offset.zero,
+    ).animate(CurvedAnimation(parent: _springCtrl, curve: Curves.easeOutCubic));
+    _springCtrl.forward();
+  }
+
+  @override
+  void dispose() {
+    _springCtrl.dispose();
+    super.dispose();
+  }
+
+  bool get _isImageOnly => widget.imageUrl != null && widget.body.trim().isEmpty;
 
   @override
   Widget build(BuildContext context) {
+    return SlideTransition(
+      position: _slideAnim,
+      child: ScaleTransition(
+        scale: _scaleAnim,
+        alignment: widget.mine ? Alignment.centerRight : Alignment.centerLeft,
+        child: _buildContent(context),
+      ),
+    );
+  }
+
+  Widget _buildContent(BuildContext context) {
+    final body = widget.body;
+    final imageUrl = widget.imageUrl;
+    final time = widget.time;
+    final mine = widget.mine;
+    final authorName = widget.authorName;
+    final showSenderAvatar = widget.showSenderAvatar;
+    final authorTap = widget.authorTap;
+    final deliveryStatus = widget.deliveryStatus;
+    final noteTitle = widget.noteTitle;
+    final noteColorLabel = widget.noteColorLabel;
+    final onNoteTap = widget.onNoteTap;
+    final isDeleted = widget.isDeleted;
+    final onDelete = widget.onDelete;
+    final onMentionTap = widget.onMentionTap;
+    final onReply = widget.onReply;
+    final replyTo = widget.replyTo;
+
     if (isDeleted) {
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 4),
@@ -1124,118 +1157,134 @@ class _MessageBubble extends StatelessWidget {
                 maxWidth: MediaQuery.of(context).size.width * 0.75,
               ),
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                 decoration: BoxDecoration(
-                  color: bg,
+                  color: _isImageOnly ? Colors.transparent : bg,
                   borderRadius: BorderRadius.circular(AppRadii.md),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    if (replyTo != null)
-                      Container(
-                        margin: const EdgeInsets.only(bottom: 6),
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                        decoration: BoxDecoration(
-                          color: fg.withValues(alpha: 0.08),
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border(
-                            left: BorderSide(
-                              color: fg.withValues(alpha: 0.4),
-                              width: 2,
-                            ),
-                          ),
-                        ),
+                    if (!_isImageOnly) ...[
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            Text(
-                              replyTo!.senderName,
-                              style: TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.w600,
-                                color: fg.withValues(alpha: 0.8),
+                            if (replyTo != null)
+                              Container(
+                                margin: const EdgeInsets.only(bottom: 6),
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                                decoration: BoxDecoration(
+                                  color: fg.withValues(alpha: 0.08),
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border(
+                                    left: BorderSide(
+                                      color: fg.withValues(alpha: 0.4),
+                                      width: 2,
+                                    ),
+                                  ),
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(
+                                      replyTo!.senderName,
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w600,
+                                        color: fg.withValues(alpha: 0.8),
+                                      ),
+                                    ),
+                                    Text(
+                                      replyTo!.body.length > 80
+                                          ? '${replyTo!.body.substring(0, 80)}...'
+                                          : replyTo!.body,
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: fg.withValues(alpha: 0.6),
+                                      ),
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ],
+                                ),
                               ),
-                            ),
-                            Text(
-                              replyTo!.body.length > 80
-                                  ? '${replyTo!.body.substring(0, 80)}...'
-                                  : replyTo!.body,
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: fg.withValues(alpha: 0.6),
+                            if (noteTitle != null)
+                              GestureDetector(
+                                onTap: onNoteTap,
+                                child: Container(
+                                  margin: const EdgeInsets.only(bottom: 6),
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                  decoration: BoxDecoration(
+                                    color: parsedNoteColor?.withValues(alpha: 0.18) ??
+                                        fg.withValues(alpha: 0.12),
+                                    borderRadius: BorderRadius.circular(999),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Container(
+                                        width: 6,
+                                        height: 6,
+                                        decoration: BoxDecoration(
+                                          color: parsedNoteColor ?? fg.withValues(alpha: 0.7),
+                                          shape: BoxShape.circle,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 6),
+                                      Text(
+                                        noteTitle!,
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w600,
+                                          color: fg,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
                               ),
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                            ),
+                            if (authorName != null)
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 2),
+                                child: GestureDetector(
+                                  onTap: authorTap,
+                                  child: Text(
+                                    authorName!,
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w600,
+                                      color: fg.withValues(alpha: 0.75),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            if (body.trim().isNotEmpty)
+                              Text.rich(
+                                buildMentionSpans(
+                                  text: body,
+                                  baseStyle: TextStyle(color: fg, fontSize: 15),
+                                  mentionColor: mine
+                                      ? const Color(0xFF2979FF)
+                                      : const Color(0xFF5B9EF4),
+                                  onMentionTap: onMentionTap,
+                                ),
+                              ),
+                            if (imageUrl == null) ...[
+                              const SizedBox(height: 2),
+                              _metaRow(
+                                formatter: formatter,
+                                fg: fg.withValues(alpha: 0.65),
+                              ),
+                            ],
                           ],
                         ),
                       ),
-                    if (noteTitle != null)
-                      GestureDetector(
-                        onTap: onNoteTap,
-                        child: Container(
-                          margin: const EdgeInsets.only(bottom: 6),
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: parsedNoteColor?.withValues(alpha: 0.18) ??
-                                fg.withValues(alpha: 0.12),
-                            borderRadius: BorderRadius.circular(999),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Container(
-                                width: 6,
-                                height: 6,
-                                decoration: BoxDecoration(
-                                  color: parsedNoteColor ?? fg.withValues(alpha: 0.7),
-                                  shape: BoxShape.circle,
-                                ),
-                              ),
-                              const SizedBox(width: 6),
-                              Text(
-                                noteTitle!,
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w600,
-                                  color: fg,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    if (authorName != null)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 2),
-                        child: GestureDetector(
-                          onTap: authorTap,
-                          child: Text(
-                            authorName!,
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w600,
-                              color: fg.withValues(alpha: 0.75),
-                            ),
-                          ),
-                        ),
-                      ),
-                    if (body.trim().isNotEmpty)
-                      Text.rich(
-                        buildMentionSpans(
-                          text: body,
-                          baseStyle: TextStyle(color: fg, fontSize: 15),
-                          mentionColor: mine
-                              ? const Color(0xFF2979FF)
-                              : const Color(0xFF5B9EF4),
-                          onMentionTap: onMentionTap,
-                        ),
-                      ),
+                    ],
                     if (imageUrl != null) ...[
-                      const SizedBox(height: 8),
                       GestureDetector(
                         onTap: () {
                           Navigator.of(context).push(
@@ -1245,27 +1294,34 @@ class _MessageBubble extends StatelessWidget {
                           );
                         },
                         child: ClipRRect(
-                          borderRadius: BorderRadius.circular(AppRadii.sm),
+                          borderRadius: _isImageOnly
+                              ? BorderRadius.circular(AppRadii.md)
+                              : BorderRadius.zero,
                           child: Image.network(
                             imageUrl!,
                             width: 220,
+                            cacheWidth: 440,
                             fit: BoxFit.cover,
                             errorBuilder: (_, __, ___) => Container(
                               width: 220,
                               height: 120,
-                              color: fg.withValues(alpha: 0.12),
+                              color: AppColors.bg2,
                               alignment: Alignment.center,
                               child: const Icon(SolarIconsOutline.galleryRemove),
                             ),
                           ),
                         ),
                       ),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(8, 4, 8, 4),
+                        child: _metaRow(
+                          formatter: formatter,
+                          fg: _isImageOnly
+                              ? AppColors.fgSoft
+                              : fg.withValues(alpha: 0.65),
+                        ),
+                      ),
                     ],
-                    const SizedBox(height: 2),
-                    _metaRow(
-                      formatter: formatter,
-                      fg: fg.withValues(alpha: 0.65),
-                    ),
                   ],
                 ),
               ),
@@ -1305,14 +1361,16 @@ class _MessageBubble extends StatelessWidget {
   }
 
   Widget _senderAvatar() {
+    final authorName = widget.authorName;
+    final authorAvatarUrl = widget.authorAvatarUrl;
     final fallback =
-        (authorName != null && authorName!.trim().isNotEmpty)
-            ? authorName!.trim()[0].toUpperCase()
+        (authorName != null && authorName.trim().isNotEmpty)
+            ? authorName.trim()[0].toUpperCase()
             : '?';
 
     return CircleAvatar(
       radius: 14,
-      backgroundImage: authorAvatarUrl != null ? NetworkImage(authorAvatarUrl!) : null,
+      backgroundImage: authorAvatarUrl != null ? NetworkImage(authorAvatarUrl) : null,
       backgroundColor: AppColors.bg2,
       child: authorAvatarUrl == null
           ? Text(
@@ -1328,7 +1386,7 @@ class _MessageBubble extends StatelessWidget {
   }
 
   Widget _outsideDeliveryIndicator() {
-    final status = deliveryStatus;
+    final status = widget.deliveryStatus;
     if (status == null) return const SizedBox.shrink();
 
     return SizedBox(
@@ -1354,7 +1412,7 @@ class _MessageBubble extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         Text(
-          formatter.format(time.toLocal()),
+          formatter.format(widget.time.toLocal()),
           style: TextStyle(
             fontSize: 10,
             color: fg,
