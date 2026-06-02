@@ -761,43 +761,77 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
         curve: Curves.easeOut,
         padding: EdgeInsets.only(bottom: bottomOffset),
         child: FrostedBar(
-          child: _showFormattingToolbar
-              ? _buildFormattingToolbar()
-              : Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                  children: [
-                    _EditorBarAction(
-                      icon: SolarIconsOutline.checkSquare,
-                      label: 'Чеклист',
-                      enabled: true,
-                      onTap: () {
-                        final blocks = ref.read(blockEditorProvider(note.id)).valueOrNull ?? [];
-                        final focusedId = ref.read(focusedBlockIdProvider);
-                        final idx = blocks.indexWhere((b) => b.id == focusedId);
-                        final pos = idx >= 0 ? idx + 1 : blocks.length;
-                        _insertBlockAt(note.id, NoteBlockType.checklist, pos);
-                      },
-                    ),
-                    _EditorBarAction(
-                      icon: Icons.text_format_rounded,
-                      label: 'Формат',
-                      enabled: true,
-                      onTap: () => setState(() => _showFormattingToolbar = true),
-                    ),
-                    _EditorBarAction(
-                      icon: SolarIconsOutline.gallery,
-                      label: 'Фото',
-                      enabled: true,
-                      onTap: () {
-                        final blocks = ref.read(blockEditorProvider(note.id)).valueOrNull ?? [];
-                        final focusedId = ref.read(focusedBlockIdProvider);
-                        final idx = blocks.indexWhere((b) => b.id == focusedId);
-                        final pos = idx >= 0 ? idx + 1 : blocks.length;
-                        _pickAndUploadImageBlock(note.id, pos);
-                      },
-                    ),
-                  ],
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  _EditorBarAction(
+                    icon: SolarIconsOutline.textFieldFocus,
+                    label: 'Текст',
+                    enabled: true,
+                    onTap: () {
+                      final blocks = ref.read(blockEditorProvider(note.id)).valueOrNull ?? [];
+                      final focusedId = ref.read(focusedBlockIdProvider);
+                      final idx = blocks.indexWhere((b) => b.id == focusedId);
+                      final pos = idx >= 0 ? idx + 1 : blocks.length;
+                      _insertBlockAt(note.id, NoteBlockType.text, pos);
+                    },
+                  ),
+                  _EditorBarAction(
+                    icon: SolarIconsOutline.checkSquare,
+                    label: 'Чеклист',
+                    enabled: true,
+                    onTap: () {
+                      final blocks = ref.read(blockEditorProvider(note.id)).valueOrNull ?? [];
+                      final focusedId = ref.read(focusedBlockIdProvider);
+                      final idx = blocks.indexWhere((b) => b.id == focusedId);
+                      final pos = idx >= 0 ? idx + 1 : blocks.length;
+                      _insertBlockAt(note.id, NoteBlockType.checklist, pos);
+                    },
+                  ),
+                  _EditorBarAction(
+                    icon: SolarIconsOutline.gallery,
+                    label: 'Фото',
+                    enabled: true,
+                    onTap: () {
+                      final blocks = ref.read(blockEditorProvider(note.id)).valueOrNull ?? [];
+                      final focusedId = ref.read(focusedBlockIdProvider);
+                      final idx = blocks.indexWhere((b) => b.id == focusedId);
+                      final pos = idx >= 0 ? idx + 1 : blocks.length;
+                      _pickAndUploadImageBlock(note.id, pos);
+                    },
+                  ),
+                  _EditorBarAction(
+                    icon: SolarIconsOutline.minusCircle,
+                    label: 'Линия',
+                    enabled: true,
+                    onTap: () {
+                      final blocks = ref.read(blockEditorProvider(note.id)).valueOrNull ?? [];
+                      final focusedId = ref.read(focusedBlockIdProvider);
+                      final idx = blocks.indexWhere((b) => b.id == focusedId);
+                      final pos = idx >= 0 ? idx + 1 : blocks.length;
+                      _insertBlockAt(note.id, NoteBlockType.divider, pos);
+                    },
+                  ),
+                  _EditorBarAction(
+                    icon: Icons.text_format_rounded,
+                    label: 'Формат',
+                    enabled: true,
+                    onTap: () => setState(() => _showFormattingToolbar = true),
+                  ),
+                ],
+              ),
+              if (_showFormattingToolbar)
+                Positioned(
+                  left: -12,
+                  right: -12,
+                  bottom: -12,
+                  child: FrostedBar(child: _buildFormattingToolbar()),
                 ),
+            ],
+          ),
         ),
       ),
     );
@@ -894,9 +928,19 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
         curve: Curves.easeOut,
         padding: EdgeInsets.only(bottom: bottomOffset),
         child: FrostedBar(
-          child: _showFormattingToolbar
-              ? _buildFormattingToolbar()
-              : _buildActionBar(note),
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              _buildActionBar(note),
+              if (_showFormattingToolbar)
+                Positioned(
+                  left: -12,
+                  right: -12,
+                  bottom: -12,
+                  child: FrostedBar(child: _buildFormattingToolbar()),
+                ),
+            ],
+          ),
         ),
       ),
     );
@@ -2214,63 +2258,76 @@ class _ChecklistItemTileState extends State<_ChecklistItemTile>
   Widget build(BuildContext context) {
     final tile = Material(
       color: Colors.transparent,
-      child: Row(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 36),
+        child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          AnimatedBuilder(
-            animation: _bounceAnim,
-            builder: (context, child) => Transform.scale(
-              scale: _bounceAnim.value,
-              child: child,
-            ),
-            child: Checkbox(
-              value: widget.item.completed,
-              onChanged: (v) => widget.onToggle(v ?? false),
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: AnimatedBuilder(
+              animation: _bounceAnim,
+              builder: (context, child) => Transform.scale(
+                scale: _bounceAnim.value,
+                child: child,
+              ),
+              child: Checkbox(
+                value: widget.item.completed,
+                onChanged: (v) => widget.onToggle(v ?? false),
+              ),
             ),
           ),
           Expanded(
-            child: _editing
-                ? TextField(
-                    controller: _editCtrl,
-                    autofocus: true,
-                    onSubmitted: (_) => _saveEdit(),
-                    onEditingComplete: _saveEdit,
-                    decoration: const InputDecoration(
-                      isDense: true,
-                      border: InputBorder.none,
+            child: Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: _editing
+                  ? TextField(
+                      controller: _editCtrl,
+                      autofocus: true,
+                      onSubmitted: (_) => _saveEdit(),
+                      onEditingComplete: _saveEdit,
+                      decoration: const InputDecoration(
+                        isDense: true,
+                        border: InputBorder.none,
+                      ),
+                    )
+                  : GestureDetector(
+                      onDoubleTap: () {
+                        setState(() {
+                          _editing = true;
+                          _editCtrl.text = widget.item.text;
+                        });
+                      },
+                      child: AnimatedDefaultTextStyle(
+                        duration: const Duration(milliseconds: 300),
+                        style: widget.item.completed
+                            ? TextStyle(
+                                decoration: TextDecoration.lineThrough,
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .onSurface
+                                    .withValues(alpha: 0.5),
+                                fontSize: 14,
+                              )
+                            : TextStyle(
+                                color: Theme.of(context).colorScheme.onSurface,
+                                fontSize: 14,
+                              ),
+                        child: Text(widget.item.text),
+                      ),
                     ),
-                  )
-                : GestureDetector(
-                    onDoubleTap: () {
-                      setState(() {
-                        _editing = true;
-                        _editCtrl.text = widget.item.text;
-                      });
-                    },
-                    child: AnimatedDefaultTextStyle(
-                      duration: const Duration(milliseconds: 300),
-                      style: widget.item.completed
-                          ? TextStyle(
-                              decoration: TextDecoration.lineThrough,
-                              color: Theme.of(context)
-                                  .colorScheme
-                                  .onSurface
-                                  .withValues(alpha: 0.5),
-                              fontSize: 14,
-                            )
-                          : TextStyle(
-                              color: Theme.of(context).colorScheme.onSurface,
-                              fontSize: 14,
-                            ),
-                      child: Text(widget.item.text),
-                    ),
-                  ),
+            ),
           ),
-          IconButton(
-            icon: const Icon(Icons.close, size: 16),
-            onPressed: widget.onDelete,
-            visualDensity: VisualDensity.compact,
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: IconButton(
+              icon: const Icon(Icons.close, size: 16),
+              onPressed: widget.onDelete,
+              visualDensity: VisualDensity.compact,
+            ),
           ),
         ],
+      ),
       ),
     );
 

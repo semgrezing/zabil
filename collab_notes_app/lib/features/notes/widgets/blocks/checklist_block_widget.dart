@@ -104,27 +104,19 @@ class _ChecklistBlockWidgetState extends State<ChecklistBlockWidget> {
             );
           }),
           Padding(
-            padding: const EdgeInsets.only(left: 4, top: 4),
-            child: Row(
-              children: [
-                Icon(Icons.add, size: 18, color: AppColors.fgSoft.withValues(alpha: 0.5)),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: TextField(
-                    controller: _addCtrl,
-                    focusNode: _addFocus,
-                    style: const TextStyle(fontSize: 14, color: AppColors.white),
-                    decoration: InputDecoration(
-                      hintText: 'Добавить пункт...',
-                      hintStyle: TextStyle(color: AppColors.fgSoft.withValues(alpha: 0.5)),
-                      isDense: true,
-                      border: InputBorder.none,
-                      contentPadding: const EdgeInsets.symmetric(vertical: 6),
-                    ),
-                    onSubmitted: _addItem,
-                  ),
-                ),
-              ],
+            padding: const EdgeInsets.only(left: 30, top: 4),
+            child: TextField(
+              controller: _addCtrl,
+              focusNode: _addFocus,
+              style: TextStyle(fontSize: 14, color: AppColors.fgSoft.withValues(alpha: 0.6)),
+              decoration: InputDecoration(
+                hintText: 'Добавить пункт...',
+                hintStyle: TextStyle(color: AppColors.fgSoft.withValues(alpha: 0.3)),
+                isDense: true,
+                border: InputBorder.none,
+                contentPadding: const EdgeInsets.symmetric(vertical: 6),
+              ),
+              onSubmitted: _addItem,
             ),
           ),
         ],
@@ -178,69 +170,81 @@ class _CheckItemTileState extends State<_CheckItemTile> {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          GestureDetector(
-            onTap: widget.onToggle,
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 200),
-              width: 20,
-              height: 20,
-              decoration: BoxDecoration(
-                color: widget.item.completed ? AppColors.white : Colors.transparent,
-                border: Border.all(
-                  color: widget.item.completed ? AppColors.white : AppColors.fgSoft,
-                  width: 1.5,
-                ),
-                borderRadius: BorderRadius.circular(4),
-              ),
-              child: widget.item.completed
-                  ? const Icon(Icons.check, size: 14, color: AppColors.bg1)
-                  : null,
-            ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: _editing
-                ? TextField(
-                    controller: _ctrl,
-                    autofocus: true,
-                    style: const TextStyle(fontSize: 14, color: AppColors.white),
-                    decoration: const InputDecoration(
-                      isDense: true,
-                      border: InputBorder.none,
-                      contentPadding: EdgeInsets.symmetric(vertical: 4),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 36),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: GestureDetector(
+                onTap: widget.onToggle,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  width: 20,
+                  height: 20,
+                  decoration: BoxDecoration(
+                    color: widget.item.completed ? AppColors.white : Colors.transparent,
+                    border: Border.all(
+                      color: widget.item.completed ? AppColors.white : AppColors.fgSoft,
+                      width: 1.5,
                     ),
-                    onSubmitted: (t) {
-                      widget.onTextChanged(t);
-                      setState(() => _editing = false);
-                    },
-                    onTapOutside: (_) {
-                      widget.onTextChanged(_ctrl.text);
-                      setState(() => _editing = false);
-                    },
-                  )
-                : GestureDetector(
-                    onDoubleTap: () => setState(() => _editing = true),
-                    child: Text(
-                      widget.item.text,
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: widget.item.completed ? AppColors.fgSoft : AppColors.white,
-                        decoration: widget.item.completed ? TextDecoration.lineThrough : null,
-                      ),
-                    ),
+                    borderRadius: BorderRadius.circular(4),
                   ),
-          ),
-          GestureDetector(
-            onTap: widget.onDelete,
-            child: Padding(
-              padding: const EdgeInsets.all(4),
-              child: Icon(Icons.close, size: 14, color: AppColors.fgSoft.withValues(alpha: 0.5)),
+                  child: widget.item.completed
+                      ? const Icon(Icons.check, size: 14, color: AppColors.bg1)
+                      : null,
+                ),
+              ),
             ),
-          ),
-        ],
+            const SizedBox(width: 10),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: _editing
+                    ? TextField(
+                        controller: _ctrl,
+                        autofocus: true,
+                        style: const TextStyle(fontSize: 14, color: AppColors.white),
+                        decoration: const InputDecoration(
+                          isDense: true,
+                          border: InputBorder.none,
+                          contentPadding: EdgeInsets.symmetric(vertical: 4),
+                        ),
+                        onSubmitted: (t) {
+                          widget.onTextChanged(t);
+                          setState(() => _editing = false);
+                        },
+                        onTapOutside: (_) {
+                          widget.onTextChanged(_ctrl.text);
+                          setState(() => _editing = false);
+                        },
+                      )
+                    : GestureDetector(
+                        onDoubleTap: () => setState(() => _editing = true),
+                        child: Text(
+                          widget.item.text,
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: widget.item.completed ? AppColors.fgSoft : AppColors.white,
+                            decoration: widget.item.completed ? TextDecoration.lineThrough : null,
+                          ),
+                        ),
+                      ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: GestureDetector(
+                onTap: widget.onDelete,
+                child: Padding(
+                  padding: const EdgeInsets.all(4),
+                  child: Icon(Icons.close, size: 14, color: AppColors.fgSoft.withValues(alpha: 0.5)),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
